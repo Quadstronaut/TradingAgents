@@ -12,14 +12,14 @@ UNIVERSE = {"AAPL", "MSFT", "NVDA", "AMD", "INTC", "PLTR", "BRK-B", "META", "GOO
 
 @pytest.mark.unit
 @pytest.mark.parametrize("prompt,expected_tickers,expected_intent,expected_hold", [
-    ("should I buy AAPL", ["AAPL"], "single", False),
-    ("Should I sell NVDA or wait?", ["NVDA"], "single", True),
-    ("compare AMD vs INTC", ["AMD", "INTC"], "multi", False),
-    ("dump my MSFT?", ["MSFT"], "single", True),
-    ("what tech companies can I get into with $100", [], "screen", False),
-    ("anything good to buy with $50", [], "screen", False),
-    ("research me some semiconductor stocks", [], "screen", False),
-    ("BRK-B worth holding?", ["BRK-B"], "single", True),
+    ("should I buy AAPL", ("AAPL",), "single", False),
+    ("Should I sell NVDA or wait?", ("NVDA",), "single", True),
+    ("compare AMD vs INTC", ("AMD", "INTC"), "multi", False),
+    ("dump my MSFT?", ("MSFT",), "single", True),
+    ("what tech companies can I get into with $100", (), "screen", False),
+    ("anything good to buy with $50", (), "screen", False),
+    ("research me some semiconductor stocks", (), "screen", False),
+    ("BRK-B worth holding?", ("BRK-B",), "single", True),
 ])
 def test_parse_prompt_classifies_correctly(prompt, expected_tickers, expected_intent, expected_hold):
     result = parse_prompt(prompt, universe=UNIVERSE)
@@ -36,14 +36,24 @@ def test_parse_prompt_classifies_correctly(prompt, expected_tickers, expected_in
 ])
 def test_parse_prompt_rejects_false_positive_ticker_words(prompt):
     result = parse_prompt(prompt, universe=UNIVERSE)
-    assert result.tickers == []
+    assert result.tickers == ()
     assert result.intent == "screen"
 
 
 @pytest.mark.unit
-def test_parse_prompt_returns_named_tuple_fields():
+def test_parse_prompt_returns_parsed_prompt_fields():
     result = parse_prompt("buy AAPL", universe=UNIVERSE)
     assert isinstance(result, ParsedPrompt)
-    assert result.tickers == ["AAPL"]
+    assert result.tickers == ("AAPL",)
     assert result.intent == "single"
+    assert result.hold_intent is False
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("prompt", [
+    "I'm awaiting news on AAPL",   # 'wait' inside 'awaiting' should not trigger
+    "the bookkeeper handles MSFT", # 'keep' inside 'bookkeeper' should not trigger
+])
+def test_hold_keywords_require_word_boundaries(prompt):
+    result = parse_prompt(prompt, universe=UNIVERSE)
     assert result.hold_intent is False

@@ -16,8 +16,9 @@ from typing import Iterable, Literal
 # - optional .X / -X suffix (BRK.B, RY.TO; CSV uses BRK-B)
 _TICKER_RE = re.compile(r"\b[A-Z]{1,5}(?:[.\-][A-Z]{1,2})?\b")
 
-_HOLD_KEYWORDS = (
-    "sell", "wait", "hold", "dump", "keep", "cut", "trim", "add to",
+_HOLD_RE = re.compile(
+    r"\b(?:sell|wait|hold|holding|dump|keep|cut|trim)\b|add to",
+    re.IGNORECASE,
 )
 
 
@@ -26,7 +27,7 @@ Intent = Literal["single", "multi", "screen"]
 
 @dataclass(frozen=True)
 class ParsedPrompt:
-    tickers: list[str]
+    tickers: tuple[str, ...]
     intent: Intent
     hold_intent: bool
 
@@ -48,8 +49,7 @@ def parse_prompt(prompt: str, universe: Iterable[str]) -> ParsedPrompt:
         if norm in universe_set and norm not in seen:
             seen.append(norm)
 
-    lower = prompt.lower()
-    hold_intent = any(kw in lower for kw in _HOLD_KEYWORDS)
+    hold_intent = bool(_HOLD_RE.search(prompt))
 
     if len(seen) == 0:
         intent: Intent = "screen"
@@ -58,4 +58,4 @@ def parse_prompt(prompt: str, universe: Iterable[str]) -> ParsedPrompt:
     else:
         intent = "multi"
 
-    return ParsedPrompt(tickers=seen, intent=intent, hold_intent=hold_intent)
+    return ParsedPrompt(tickers=tuple(seen), intent=intent, hold_intent=hold_intent)

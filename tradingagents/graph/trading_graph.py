@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 import json
 from datetime import datetime, timedelta
-from typing import Dict, Any, Tuple, List, Optional
+from typing import Callable, Dict, Any, Tuple, List, Optional
 
 import yfinance as yf
 
@@ -57,6 +57,7 @@ class TradingAgentsGraph:
         debug=False,
         config: Dict[str, Any] = None,
         callbacks: Optional[List] = None,
+        progress_callback: Optional[Callable[[str, Dict[str, Any]], None]] = None,
     ):
         """Initialize the trading agents graph and components.
 
@@ -65,10 +66,14 @@ class TradingAgentsGraph:
             debug: Whether to run in debug mode
             config: Configuration dictionary. If None, uses default config
             callbacks: Optional list of callback handlers (e.g., for tracking LLM/tool stats)
+            progress_callback: Optional ``(node_name, delta_payload) -> None`` invoked
+                once per LangGraph node completion. When set, the graph runs in
+                streaming mode so per-node progress can be surfaced to a UI.
         """
         self.debug = debug
         self.config = config or DEFAULT_CONFIG
         self.callbacks = callbacks or []
+        self.progress_callback = progress_callback
 
         # Update the interface's config
         set_config(self.config)
@@ -320,7 +325,22 @@ class TradingAgentsGraph:
             tid = thread_id(company_name, str(trade_date))
             args.setdefault("config", {}).setdefault("configurable", {})["thread_id"] = tid
 
-        if self.debug:
+        if self.progress_callback is not None:
+            # Stream both 'values' (full state snapshots) and 'updates'
+            # (per-node deltas keyed by node name). Forward 'updates' to the
+            # progress callback; keep the latest 'values' as the final state.
+            args = {**args, "stream_mode": ["values", "updates"]}
+            final_state: Dict[str, Any] = {}
+            for mode, payload in self.graph.stream(init_agent_state, **args):
+                if mode == "values":
+                    final_state = payload
+                elif mode == "updates" and isinstance(payload, dict):
+                    for node_name, delta in payload.items():
+                        try:
+                            self.progress_callback(node_name, delta or {})
+                        except Exception:
+                            logger.exception("progress_callback raised; continuing")
+        elif self.debug:
             trace = []
             for chunk in self.graph.stream(init_agent_state, **args):
                 if len(chunk["messages"]) == 0:

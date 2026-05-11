@@ -42,8 +42,10 @@ def universe_loader():
 def test_single_ticker_skips_shortlist_and_runs_propagate_once(
     fake_graph, universe_loader, tmp_path
 ):
-    inputs = ["", "y"]  # ask_position: skip count; per-ticker confirm: y
-    with patch("builtins.input", side_effect=inputs):
+    # "buy" doesn't trigger hold_intent → no position prompt; new single
+    # path doesn't ask for per-ticker confirm either (menu confirm or
+    # caller's confirm is the gate).
+    with patch("builtins.input", side_effect=[]):
         rc = main(prompt="should I buy NVDA", budget=None, output_dir=tmp_path)
 
     assert rc == 0
@@ -93,7 +95,7 @@ def test_per_ticker_abort_breaks_loop_immediately(
 def test_position_context_threaded_into_propagate_when_provided(
     fake_graph, universe_loader, tmp_path
 ):
-    inputs = ["50", "130", "y"]  # ask_position: 50, 130; per-ticker confirm: y
+    inputs = ["50", "130"]  # ask_position: 50 shares, $130 basis
     with patch("builtins.input", side_effect=inputs):
         rc = main(prompt="should I sell NVDA", budget=None, output_dir=tmp_path)
 

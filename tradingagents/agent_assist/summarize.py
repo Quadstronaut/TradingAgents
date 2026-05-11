@@ -27,6 +27,7 @@ class RunResult:
     rating: str                    # Buy / Overweight / Hold / Underweight / Sell / SKIPPED / FAILED
     log_path: Optional[Path]
     error: Optional[str]           # populated for FAILED
+    decision_md: Optional[str] = None  # full Portfolio Manager decision markdown (compare flow uses this)
 
 
 def rank_results(results: list[RunResult]) -> list[RunResult]:

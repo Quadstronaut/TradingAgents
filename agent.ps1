@@ -2,43 +2,49 @@
 .SYNOPSIS
     Natural-language wrapper for TradingAgents runs.
 
+.DESCRIPTION
+    With no arguments, launches the interactive guided menu — the
+    recommended entry point. Pass -Prompt "..." to skip the menu and
+    use the free-form path (same as menu option 7).
+
 .PARAMETER Prompt
-    Your natural-language ask. Examples:
-      "should I buy NVDA"
-      "tech companies I can get into this week"
-      "should I sell NVDA or wait?"
+    Optional. Free-form natural-language ask. When supplied, the menu is
+    skipped and this prompt is parsed directly.
+
+    Note: PowerShell interpolates "$variables" inside double-quoted
+    strings, so a ticker-like "$100" will be eaten. Either use single
+    quotes ('like this') or omit the parameter and use the menu.
 
 .PARAMETER Budget
-    Optional. Max per-share price in USD when the prompt is a screen.
-    If omitted, the orchestrator will ask you interactively.
+    Optional. Max per-share price in USD; only meaningful with -Prompt.
 
 .EXAMPLE
-    ./agent.ps1 "should I buy NVDA"
+    ./agent.ps1
+    # launches the guided menu
 
 .EXAMPLE
-    ./agent.ps1 "what tech can I get into" -Budget 100
+    ./agent.ps1 -Prompt 'should I buy NVDA'
+
+.EXAMPLE
+    ./agent.ps1 -Prompt 'tech under $100' -Budget 100
 #>
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true, Position = 0)]
     [string]$Prompt,
-
     [int]$Budget
 )
 
 $ErrorActionPreference = "Stop"
 
-if ([string]::IsNullOrWhiteSpace($Prompt)) {
-    Write-Error "Prompt cannot be empty."
-    exit 1
-}
-
 $repoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $repoRoot
 
-$pyArgs = @("scripts/agent_assist.py", "--prompt", $Prompt)
-if ($PSBoundParameters.ContainsKey('Budget')) {
-    $pyArgs += @("--budget", $Budget)
+$pyArgs = @("scripts/agent_assist.py")
+if ($PSBoundParameters.ContainsKey('Prompt') -and -not [string]::IsNullOrWhiteSpace($Prompt)) {
+    $pyArgs += @("--prompt", $Prompt)
+    if ($PSBoundParameters.ContainsKey('Budget')) {
+        $pyArgs += @("--budget", $Budget)
+    }
 }
 
 & uv run python @pyArgs

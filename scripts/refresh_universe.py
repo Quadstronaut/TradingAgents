@@ -26,6 +26,7 @@ OUT_PATH = (
 SP500_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
 NDX_URL = "https://en.wikipedia.org/wiki/Nasdaq-100"
 
+# Wikipedia 403s pandas/urllib's default User-Agent; spoof a browser to fetch.
 _HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (compatible; TradingAgents-refresh/1.0; "
@@ -42,7 +43,13 @@ def _read_html(url: str) -> list:
 
 def _fetch_sp500() -> pd.DataFrame:
     tables = _read_html(SP500_URL)
-    df = tables[0]
+    df = None
+    for t in tables:
+        if "Symbol" in t.columns:
+            df = t
+            break
+    if df is None:
+        raise RuntimeError("Could not find S&P 500 constituents table on Wikipedia")
     return pd.DataFrame({
         "ticker": df["Symbol"].str.replace(".", "-", regex=False),  # BRK.B → BRK-B for yfinance
         "name": df["Security"],
@@ -64,7 +71,15 @@ def _fetch_ndx() -> pd.DataFrame:
         raise RuntimeError("Could not find Nasdaq-100 constituents table on Wikipedia")
 
     sym_col = "Ticker" if "Ticker" in target.columns else "Symbol"
-    name_col = "Company" if "Company" in target.columns else target.columns[0]
+    for candidate in ("Company", "Security", "Name"):
+        if candidate in target.columns:
+            name_col = candidate
+            break
+    else:
+        raise RuntimeError(
+            f"Could not find a name column on Nasdaq-100 table. "
+            f"Available columns: {list(target.columns)}"
+        )
     sector_col = "GICS Sector" if "GICS Sector" in target.columns else None
     industry_col = "GICS Sub-Industry" if "GICS Sub-Industry" in target.columns else None
 

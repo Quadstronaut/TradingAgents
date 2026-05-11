@@ -36,7 +36,8 @@ from tradingagents.agents.utils.agent_utils import (
     get_income_statement,
     get_news,
     get_insider_transactions,
-    get_global_news
+    get_global_news,
+    get_reddit_sentiment,
 )
 
 from .checkpointer import checkpoint_step, clear_checkpoint, get_checkpointer, thread_id
@@ -167,6 +168,8 @@ class TradingAgentsGraph:
                 [
                     # News tools for social media analysis
                     get_news,
+                    # Reddit sentiment from local cache (gracefully degrades if missing)
+                    get_reddit_sentiment,
                 ]
             ),
             "news": ToolNode(

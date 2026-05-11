@@ -18,6 +18,7 @@ from tradingagents.agents.utils.news_data_tools import (
     get_insider_transactions,
     get_global_news
 )
+from tradingagents.agent_assist.reddit_sentiment import get_reddit_sentiment
 
 
 def get_language_instruction() -> str:

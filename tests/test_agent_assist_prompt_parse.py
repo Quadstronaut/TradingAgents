@@ -2,7 +2,11 @@
 
 import pytest
 
-from tradingagents.agent_assist.prompt_parse import ParsedPrompt, parse_prompt
+from tradingagents.agent_assist.prompt_parse import (
+    ParsedPrompt,
+    normalize_ticker,
+    parse_prompt,
+)
 
 
 # Universe used by the parser to validate ticker candidates. Keep small and
@@ -57,3 +61,32 @@ def test_parse_prompt_returns_parsed_prompt_fields():
 def test_hold_keywords_require_word_boundaries(prompt):
     result = parse_prompt(prompt, universe=UNIVERSE)
     assert result.hold_intent is False
+
+
+# ---------------------------------------------------------------------------
+# normalize_ticker: single source of truth for ticker canonicalisation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("raw,expected", [
+    ("nvda", "NVDA"),
+    ("NVDA", "NVDA"),
+    ("brk.b", "BRK-B"),
+    ("BRK.B", "BRK-B"),
+    ("BRK-B", "BRK-B"),          # already canonical → idempotent
+    ("brk-b", "BRK-B"),
+    ("  AAPL  ", "AAPL"),         # surrounding whitespace stripped
+    ("\tBF.B\n", "BF-B"),
+])
+def test_normalize_ticker_canonicalises_inputs(raw, expected):
+    assert normalize_ticker(raw) == expected
+
+
+@pytest.mark.unit
+def test_normalize_ticker_is_idempotent():
+    """f(f(x)) == f(x) for every input the codebase produces."""
+    for raw in ["nvda", "brk.b", "BRK-B", "  amd  ", "msft"]:
+        once = normalize_ticker(raw)
+        twice = normalize_ticker(once)
+        assert once == twice

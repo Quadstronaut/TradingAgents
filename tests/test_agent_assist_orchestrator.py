@@ -12,6 +12,7 @@ from tradingagents.agent_assist.orchestrator import (
     _run_budget,
     _theme_filter,
     main,
+    run_task,
 )
 from tradingagents.agent_assist.shortlist import PricedCandidate
 
@@ -315,6 +316,68 @@ def test_run_budget_theme_soft_fallback_when_hard_match_too_sparse(tmp_path, cap
     # Soft fallback: all affordables (price <= 30) passed through regardless of theme.
     # BAC ($38) is above budget so it's not in the affordable set.
     assert sent == ["F", "INTC", "PFE"]
+
+
+# ---------------------------------------------------------------------------
+# run_task: normalises ticker / ticker_b at the boundary
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_run_task_normalises_specific_ticker_before_propagate(
+    fake_graph, universe_loader, tmp_path
+):
+    """A programmatic Task with a non-canonical ticker must reach propagate
+    in canonical form (the menu+freeform paths normalise too — run_task is
+    the safety net for direct callers like tests and scripts)."""
+    task = Task(intent="specific", ticker="brk.b")
+    rc = run_task(task, output_dir=tmp_path)
+
+    assert rc == 0
+    args, _ = fake_graph.propagate.call_args
+    assert args[0] == "BRK-B"
+
+
+@pytest.mark.unit
+def test_run_task_normalises_owned_ticker_and_position_context(
+    fake_graph, universe_loader, tmp_path
+):
+    """Owned flow builds a position-context string from task.ticker — that
+    string must use the canonical form too."""
+    task = Task(intent="owned", ticker="brk.b", shares=10, cost_basis=400.0)
+    rc = run_task(task, output_dir=tmp_path)
+
+    assert rc == 0
+    args, kwargs = fake_graph.propagate.call_args
+    assert args[0] == "BRK-B"
+    pos_ctx = kwargs.get("additional_portfolio_context", "")
+    assert "BRK-B" in pos_ctx
+    assert "brk.b" not in pos_ctx and "BRK.B" not in pos_ctx
+
+
+@pytest.mark.unit
+def test_run_task_normalises_both_compare_tickers(
+    fake_graph, universe_loader, tmp_path
+):
+    """Compare flow takes two tickers — both must be normalised."""
+    fake_graph.propagate.side_effect = [
+        ({}, "FINAL TRANSACTION PROPOSAL: **BUY**"),
+        ({}, "FINAL TRANSACTION PROPOSAL: **HOLD**"),
+    ]
+    # Mock the compare summariser so we don't hit a real LLM
+    from unittest.mock import patch as _patch
+    with _patch(
+        "tradingagents.agent_assist.compare._summarize_comparison",
+    ) as _summ:
+        from tradingagents.agent_assist.compare import ComparisonVerdict
+        _summ.return_value = ComparisonVerdict(winner="A", reasoning="x")
+        task = Task(intent="compare", ticker="brk.b", ticker_b="bf.b")
+        rc = run_task(task, output_dir=tmp_path)
+
+    assert rc == 0
+    # Two propagate calls, both with normalised tickers
+    call_tickers = [c.args[0] for c in fake_graph.propagate.call_args_list]
+    assert call_tickers == ["BRK-B", "BF-B"]
 
 
 # ---------------------------------------------------------------------------

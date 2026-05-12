@@ -14,6 +14,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable, Literal, Optional
 
+from tradingagents.agent_assist.prompt_parse import normalize_ticker
+
 Intent = Literal[
     "specific",   # 1) Analyze a specific ticker
     "theme",      # 2) Who's big in <theme>
@@ -80,14 +82,13 @@ def _ask(prompt: str, *, allow_back: bool = True) -> str:
 
 
 def _ask_ticker(label: str = "Ticker") -> str:
-    """Prompt for a ticker, normalised to uppercase. Re-prompts on empty."""
+    """Prompt for a ticker, normalised to canonical form. Re-prompts on empty."""
     while True:
         raw = _ask(f"{label} (e.g. NVDA, BRK.B): ")
         if not raw:
             print("  Ticker can't be empty. (Type 'b' to go back.)")
             continue
-        # Common: user types "brk-b" → normalise to "BRK.B"-style. CSV uses "-".
-        return raw.upper().replace(".", "-")
+        return normalize_ticker(raw)
 
 
 def _ask_int(label: str, minimum: Optional[int] = None) -> int:

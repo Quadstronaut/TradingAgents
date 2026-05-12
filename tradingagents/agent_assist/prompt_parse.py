@@ -22,6 +22,20 @@ _HOLD_RE = re.compile(
 )
 
 
+def normalize_ticker(raw: str) -> str:
+    """Canonical ticker form: upper-cased, share-class ``.`` → ``-``.
+
+    ``BRK.B`` → ``BRK-B`` (matches the bundled universe CSV's yfinance
+    convention). Idempotent: ``BRK-B`` → ``BRK-B``. Strips surrounding
+    whitespace so direct ``input()`` values are safe.
+
+    The whole codebase routes ticker normalization through this helper so
+    downstream paths (yfinance fetchers, logging dirs, position strings)
+    see one canonical spelling regardless of entry point.
+    """
+    return raw.strip().upper().replace(".", "-")
+
+
 Intent = Literal["single", "multi", "screen"]
 
 
@@ -45,7 +59,7 @@ def parse_prompt(prompt: str, universe: Iterable[str]) -> ParsedPrompt:
     candidates = _TICKER_RE.findall(prompt)
     seen: list[str] = []
     for raw in candidates:
-        norm = raw.replace(".", "-").upper()
+        norm = normalize_ticker(raw)
         if norm in universe_set and norm not in seen:
             seen.append(norm)
 

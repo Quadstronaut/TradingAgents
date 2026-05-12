@@ -13,6 +13,7 @@ process exit code.
 
 from __future__ import annotations
 
+import dataclasses
 import datetime
 import logging
 import re
@@ -34,7 +35,11 @@ from tradingagents.agent_assist.progress import (
     full_pipeline_phases,
     progress_display,
 )
-from tradingagents.agent_assist.prompt_parse import ParsedPrompt, parse_prompt
+from tradingagents.agent_assist.prompt_parse import (
+    ParsedPrompt,
+    normalize_ticker,
+    parse_prompt,
+)
 from tradingagents.agent_assist.shortlist import (
     PricedCandidate,
     bulk_price,
@@ -470,9 +475,20 @@ def _ask_budget() -> Optional[int]:
 
 
 def run_task(task: Task, *, output_dir: Optional[Path] = None) -> int:
-    """Route a Task to the right flow and return a process exit code."""
+    """Route a Task to the right flow and return a process exit code.
+
+    Normalises ``task.ticker`` / ``task.ticker_b`` once here so every
+    downstream flow (yfinance fetchers, path joins, position strings,
+    LLM prompts) sees the canonical spelling regardless of how the Task
+    was constructed (menu, freeform parse, or programmatic test).
+    """
     if output_dir is None:
         output_dir = Path.home() / ".tradingagents" / "agent_assist"
+
+    if task.ticker:
+        task = dataclasses.replace(task, ticker=normalize_ticker(task.ticker))
+    if task.ticker_b:
+        task = dataclasses.replace(task, ticker_b=normalize_ticker(task.ticker_b))
 
     universe_df = load_universe()
 

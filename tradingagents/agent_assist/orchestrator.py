@@ -227,7 +227,6 @@ def _run_shortlist_flow(
 
     results: list[RunResult] = []
     config = _build_config()
-    today = datetime.date.today().isoformat()
 
     for c in candidates:
         choice = _confirm_run(c.ticker)
@@ -238,6 +237,10 @@ def _run_shortlist_flow(
             print(f"Aborting before {c.ticker}.")
             break
 
+        # Recompute today per ticker — a 3-ticker run that starts at 23:55
+        # would otherwise stamp tickers 2 and 3 with yesterday's date and
+        # miss today's news.
+        today = datetime.date.today().isoformat()
         result = _run_one_deep(c.ticker, today=today, config=config)
         results.append(result)
 
@@ -464,8 +467,12 @@ def _run_freeform(task: Task, *, output_dir: Path, universe_df: pd.DataFrame) ->
         if not _confirm_bulk(n):
             print("Aborted.")
             return 0
-        today = datetime.date.today().isoformat()
-        results = [_run_one_deep(t, today=today) for t in parsed.tickers]
+        # Recompute today per ticker so a multi-run spanning midnight stamps
+        # each ticker with its actual start date.
+        results = [
+            _run_one_deep(t, today=datetime.date.today().isoformat())
+            for t in parsed.tickers
+        ]
         summary_path = write_summary(
             prompt=task.prompt, results=results, output_dir=output_dir,
         )

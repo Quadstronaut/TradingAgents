@@ -415,6 +415,35 @@ def test_multi_ticker_freeform_reprompts_on_invalid_then_accepts(
     assert fake_graph.propagate.call_count == 2
 
 
+@pytest.mark.unit
+def test_multi_ticker_freeform_recomputes_today_per_ticker(
+    fake_graph, multi_universe_loader, tmp_path,
+):
+    """A multi-ticker run started near midnight could span the date
+    boundary. Each _run_one_deep call must use the date current at the
+    moment it starts — not a date frozen at the start of the loop."""
+    fake_today_1 = MagicMock()
+    fake_today_1.isoformat.return_value = "2026-05-11"
+    fake_today_2 = MagicMock()
+    fake_today_2.isoformat.return_value = "2026-05-12"
+
+    with patch(
+        "tradingagents.agent_assist.orchestrator.datetime.date"
+    ) as mock_date:
+        mock_date.today.side_effect = [fake_today_1, fake_today_2]
+        with patch("builtins.input", side_effect=["y"]):
+            rc = main(
+                prompt="compare AMD vs INTC",
+                budget=None,
+                output_dir=tmp_path,
+            )
+
+    assert rc == 0
+    # Each propagate call's positional today arg differs — proves recomputation
+    today_args = [c.args[1] for c in fake_graph.propagate.call_args_list]
+    assert today_args == ["2026-05-11", "2026-05-12"]
+
+
 # ---------------------------------------------------------------------------
 # run_task: normalises ticker / ticker_b at the boundary
 # ---------------------------------------------------------------------------

@@ -83,13 +83,13 @@ def run_compare(
     safe_ticker_component(ticker_a)
     safe_ticker_component(ticker_b)
 
-    today = datetime.date.today().isoformat()
-
     print(f"=== Compare: {ticker_a} vs {ticker_b} ===")
     print(f"Running deep analysis on {ticker_a} first (~15 min)…")
-    result_a = deep_runner(ticker_a, today=today)
+    # Recompute today per ticker — a 30-min compare started near midnight
+    # would otherwise stamp ticker B with yesterday's date.
+    result_a = deep_runner(ticker_a, today=datetime.date.today().isoformat())
     print(f"Running deep analysis on {ticker_b} (~15 min)…")
-    result_b = deep_runner(ticker_b, today=today)
+    result_b = deep_runner(ticker_b, today=datetime.date.today().isoformat())
 
     if result_a.rating == "FAILED" or result_b.rating == "FAILED":
         print("One or both deep runs failed; writing partial summary.")

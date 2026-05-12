@@ -354,11 +354,15 @@ def _shortlist_round(
     *,
     precomputed_prices: Optional[dict[str, float]] = None,
 ) -> tuple[list[PricedCandidate], list[str]]:
-    """Single LLM round: ask for picks, filter by price, return (kept, rejected).
+    """Single LLM round: ask for picks, filter by universe + price.
 
-    Shared by initial pass and reprompt — same logic for both rounds keeps
-    the two-attempt contract honest: any survivor from either round
-    deserves to reach the caller.
+    Returns ``(kept, rejected)``. A candidate is rejected when:
+      - The LLM hallucinated a ticker not in the supplied universe (the
+        prompt instructs to pick from the list, but models drift). Without
+        this guard, yfinance may price an unrelated symbol and the user
+        runs a 15-min deep analysis on a ticker they never asked about.
+      - The price cannot be resolved.
+      - The price is above the budget cap.
     """
     prompt = _build_prompt(
         user_prompt, universe, budget,
@@ -367,9 +371,19 @@ def _shortlist_round(
     )
     result: ShortList = llm.invoke(prompt)
 
+    universe_set = set(universe["ticker"].astype(str).tolist())
+
     kept: list[PricedCandidate] = []
     rejected: list[str] = []
     for cand in result.candidates:
+        if cand.ticker not in universe_set:
+            # Hallucination — LLM picked something outside the list it
+            # was given. Surface in rejected so the reprompt can exclude it.
+            logger.debug(
+                "shortlist rejected out-of-universe candidate: %s", cand.ticker,
+            )
+            rejected.append(cand.ticker)
+            continue
         price = _resolve_price(cand.ticker, precomputed_prices)
         if price is None:
             rejected.append(cand.ticker)

@@ -140,6 +140,60 @@ def test_shortlist_returns_lone_survivor_from_reprompt_when_first_pass_empty():
 
 
 @pytest.mark.unit
+def test_shortlist_rejects_out_of_universe_hallucinations():
+    """The LLM is told to pick from the universe list, but models drift.
+    A hallucinated ticker (not in universe) that yfinance can still price
+    must not slip through — the user would get a deep analysis on a name
+    they never asked about."""
+    # AAPL is not in UNIVERSE_DF — it's a hallucination.
+    fake_llm = _llm_returning([
+        [
+            {"ticker": "AAPL", "reasoning": "fabricated"},   # out of universe
+            {"ticker": "INTC", "reasoning": "value"},
+            {"ticker": "PLTR", "reasoning": "growth"},
+        ],
+    ])
+    # Mock _price so even AAPL would price if reached — proving the universe
+    # check (not the price check) is what rejects it.
+    with patch("tradingagents.agent_assist.shortlist._build_llm", return_value=fake_llm), \
+         patch("tradingagents.agent_assist.shortlist._price",
+               side_effect=_mock_price({
+                   "AAPL": 150.0, "INTC": 24.0, "PLTR": 87.0,
+               })):
+        result = shortlist("tech", UNIVERSE_DF, budget=None)
+
+    tickers = sorted(c.ticker for c in result)
+    assert tickers == ["INTC", "PLTR"]
+    assert "AAPL" not in tickers
+
+
+@pytest.mark.unit
+def test_shortlist_out_of_universe_picks_go_to_reject_list():
+    """Hallucinated tickers must be added to the reject list so the
+    reprompt can exclude them (otherwise the LLM might keep suggesting them)."""
+    # Pass 1: all 3 out-of-universe → 0 kept, 3 rejected
+    # Pass 2: 2 valid in-universe → 2 kept
+    fake_llm = _llm_returning([
+        [
+            {"ticker": "XXXX", "reasoning": "x"},
+            {"ticker": "YYYY", "reasoning": "y"},
+            {"ticker": "ZZZZ", "reasoning": "z"},
+        ],
+        [
+            {"ticker": "AMD", "reasoning": "real"},
+            {"ticker": "INTC", "reasoning": "real"},
+        ],
+    ])
+    with patch("tradingagents.agent_assist.shortlist._build_llm", return_value=fake_llm), \
+         patch("tradingagents.agent_assist.shortlist._price",
+               side_effect=_mock_price({"AMD": 142.0, "INTC": 24.0})):
+        result = shortlist("tech", UNIVERSE_DF, budget=None)
+
+    tickers = sorted(c.ticker for c in result)
+    assert tickers == ["AMD", "INTC"]
+
+
+@pytest.mark.unit
 def test_shortlist_merge_dedupes_repeats_across_rounds():
     """If the reprompt names a ticker already kept from pass 1, the merge
     must dedupe — don't show the same ticker twice in the shortlist."""

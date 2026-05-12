@@ -112,3 +112,79 @@ def test_aggregate_score_is_confidence_and_size_weighted(tmp_path):
 def test_path_traversal_in_ticker_is_rejected(tmp_path):
     with pytest.raises(ValueError):
         rs.read_records("../etc/passwd", cache_dir=tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# Time-decayed sentiment aggregation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_recent_record_dominates_old_record_of_opposite_sign(tmp_path):
+    """A bullish record from today should outweigh an equally-sized bearish
+    record from two weeks ago — the practitioner-standard exponential decay
+    (α=0.10/day) has the older record at ~14% relative weight."""
+    now = datetime(2026, 5, 11, 12, 0, tzinfo=timezone.utc)
+    fresh = (now - timedelta(hours=1)).isoformat().replace("+00:00", "Z")
+    stale = (now - timedelta(days=14)).isoformat().replace("+00:00", "Z")
+    _write_jsonl(tmp_path / "NVDA.jsonl", [
+        _record(fresh, sub="r1", score=0.9, confidence=0.8, n_posts=40),
+        _record(stale, sub="r2", score=-0.9, confidence=0.8, n_posts=40),
+    ])
+
+    records = rs.read_records(
+        "NVDA", lookback_days=30, cache_dir=tmp_path, now=now,
+    )
+    assert len(records) == 2
+    out = rs.summarize(records, now=now)
+    # Fresh record (positive) wins despite equal raw weights pre-decay.
+    assert "bullish" in out.lower()
+
+
+@pytest.mark.unit
+def test_decay_inverts_lean_when_old_signal_was_strong(tmp_path):
+    """The opposite case proves the decay actually works: same scores but
+    bullish was 14 days ago, bearish is today → aggregate must lean bearish."""
+    now = datetime(2026, 5, 11, 12, 0, tzinfo=timezone.utc)
+    fresh = (now - timedelta(hours=1)).isoformat().replace("+00:00", "Z")
+    stale = (now - timedelta(days=14)).isoformat().replace("+00:00", "Z")
+    _write_jsonl(tmp_path / "NVDA.jsonl", [
+        _record(stale, sub="r1", score=0.9, confidence=0.8, n_posts=40),
+        _record(fresh, sub="r2", score=-0.9, confidence=0.8, n_posts=40),
+    ])
+
+    records = rs.read_records(
+        "NVDA", lookback_days=30, cache_dir=tmp_path, now=now,
+    )
+    out = rs.summarize(records, now=now)
+    assert "bearish" in out.lower()
+
+
+@pytest.mark.unit
+def test_summary_advertises_time_decay():
+    """Tail consumers (an LLM analyst) should be able to read the summary
+    and know weights are time-aware. Surface the fact in the header line."""
+    now = datetime(2026, 5, 11, 12, 0, tzinfo=timezone.utc)
+    rec = rs.SentimentRecord(
+        ts=now - timedelta(hours=2), sub="wsb",
+        score=0.5, confidence=0.7, n_posts=20,
+    )
+    out = rs.summarize([rec], now=now)
+    assert "time-decayed" in out.lower()
+
+
+@pytest.mark.unit
+def test_empty_total_weight_does_not_crash(tmp_path):
+    """Edge case: a very old record with α decay can still contribute
+    measurable weight, but a contrived all-zero-confidence list yields
+    total_weight=0 → divisor protection must return neutral."""
+    rec = rs.SentimentRecord(
+        ts=datetime(2026, 5, 11, 12, 0, tzinfo=timezone.utc),
+        sub="wsb",
+        score=0.9, confidence=0.0, n_posts=20,
+    )
+    out = rs.summarize(
+        [rec], now=datetime(2026, 5, 11, 12, 0, tzinfo=timezone.utc),
+    )
+    # confidence=0 → weight 0 → aggregate guards against div-by-0 → neutral
+    assert "neutral" in out.lower() or "mixed" in out.lower()

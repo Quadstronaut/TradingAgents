@@ -51,7 +51,17 @@ _RATING_RE = re.compile(
     r"FINAL TRANSACTION PROPOSAL:\s*\*\*\s*(Buy|Overweight|Hold|Underweight|Sell)\s*\*\*",
     re.IGNORECASE,
 )
-_VALID_RATINGS = {"Buy", "Overweight", "Hold", "Underweight", "Sell"}
+_FALLBACK_RATING_RE = re.compile(
+    r"\*\*\s*(Buy|Overweight|Hold|Underweight|Sell)\s*\*\*",
+    re.IGNORECASE,
+)
+_RATING_CANONICAL = {
+    "buy": "Buy",
+    "overweight": "Overweight",
+    "hold": "Hold",
+    "underweight": "Underweight",
+    "sell": "Sell",
+}
 
 # Per-deep-run estimate used to populate the progress "est. remaining" hint.
 DEEP_RUN_SECONDS = 15 * 60
@@ -78,14 +88,21 @@ def _confirm_run(ticker: str) -> str:
 
 
 def _extract_rating(decision_md: str) -> str:
-    m = _RATING_RE.search(decision_md or "")
+    """Pull the final rating out of the Portfolio Manager's rendered markdown.
+
+    Strategy: canonical ``FINAL TRANSACTION PROPOSAL: **<Rating>**`` marker
+    first. If that's missing (malformed verdict), fall back to scanning all
+    ``**<Rating>**`` tokens in the doc and returning the **last** one — the
+    verdict is rendered at the end, so the closest-to-end occurrence is the
+    best guess. Defaults to ``Hold`` when nothing matches.
+    """
+    text = decision_md or ""
+    m = _RATING_RE.search(text)
     if m:
-        cap = m.group(1).capitalize()
-        if cap in _VALID_RATINGS:
-            return cap
-    for r in _VALID_RATINGS:
-        if f"**{r}**" in (decision_md or ""):
-            return r
+        return _RATING_CANONICAL[m.group(1).lower()]
+    matches = _FALLBACK_RATING_RE.findall(text)
+    if matches:
+        return _RATING_CANONICAL[matches[-1].lower()]
     return "Hold"
 
 

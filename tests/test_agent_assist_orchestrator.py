@@ -8,6 +8,7 @@ import pytest
 
 from tradingagents.agent_assist.menu import Task
 from tradingagents.agent_assist.orchestrator import (
+    _extract_rating,
     _run_budget,
     _theme_filter,
     main,
@@ -314,6 +315,78 @@ def test_run_budget_theme_soft_fallback_when_hard_match_too_sparse(tmp_path, cap
     # Soft fallback: all affordables (price <= 30) passed through regardless of theme.
     # BAC ($38) is above budget so it's not in the affordable set.
     assert sent == ["F", "INTC", "PFE"]
+
+
+# ---------------------------------------------------------------------------
+# _extract_rating: canonical marker + deterministic fallback
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("marker,expected", [
+    ("FINAL TRANSACTION PROPOSAL: **Buy**", "Buy"),
+    ("FINAL TRANSACTION PROPOSAL: **OVERWEIGHT**", "Overweight"),
+    ("FINAL TRANSACTION PROPOSAL: **hold**", "Hold"),
+    ("FINAL TRANSACTION PROPOSAL:  **Underweight** ", "Underweight"),
+    ("final transaction proposal: **Sell**", "Sell"),
+])
+def test_extract_rating_canonical_marker_case_insensitive(marker, expected):
+    assert _extract_rating(f"some prose\n{marker}\n") == expected
+
+
+@pytest.mark.unit
+def test_extract_rating_returns_hold_on_empty_or_none():
+    assert _extract_rating("") == "Hold"
+    assert _extract_rating(None) == "Hold"
+    assert _extract_rating("no rating tokens here at all") == "Hold"
+
+
+@pytest.mark.unit
+def test_extract_rating_fallback_picks_last_match_not_first():
+    """When the canonical marker is missing, the verdict sits at the end of
+    the doc. Mid-doc quotes of other ratings must NOT override the final."""
+    md = (
+        "**Recommendation**: bull says **Buy** but bear says **Sell**.\n"
+        "After weighing both: **Hold** is the right call.\n"
+    )
+    assert _extract_rating(md) == "Hold"
+
+
+@pytest.mark.unit
+def test_extract_rating_fallback_is_deterministic_across_repeated_calls():
+    """The pre-fix code iterated a Python set (hash-randomized order). Run
+    the same input many times and confirm identical output every time."""
+    md = (
+        "Analyst: this is a **Buy** opportunity.\n"
+        "Risk debater: counters with **Sell** in volatile regime.\n"
+        "Final synthesis: **Overweight** with caveats.\n"
+    )
+    results = {_extract_rating(md) for _ in range(500)}
+    assert results == {"Overweight"}, f"non-deterministic: {results}"
+
+
+@pytest.mark.unit
+def test_extract_rating_canonical_wins_over_mid_doc_tokens():
+    """Canonical FINAL TRANSACTION marker beats any other token in the doc."""
+    md = (
+        "**Buy** in the early thesis section.\n"
+        "Reconsidered after risk debate.\n"
+        "FINAL TRANSACTION PROPOSAL: **Sell**\n"
+        "Trailing notes mention **Hold** once more.\n"
+    )
+    # Canonical marker captures Sell despite Hold appearing afterwards.
+    assert _extract_rating(md) == "Sell"
+
+
+@pytest.mark.unit
+def test_extract_rating_tolerates_whitespace_inside_bold_tokens():
+    md = "Final view: **  Overweight  ** with monitoring."
+    assert _extract_rating(md) == "Overweight"
+
+
+# ---------------------------------------------------------------------------
+# _run_budget continued
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.unit

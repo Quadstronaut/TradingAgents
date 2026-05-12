@@ -90,3 +90,26 @@ def test_normalize_ticker_is_idempotent():
         once = normalize_ticker(raw)
         twice = normalize_ticker(once)
         assert once == twice
+
+
+# ---------------------------------------------------------------------------
+# parse_prompt: case-insensitive ticker recognition
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("prompt,expected_tickers,expected_intent", [
+    ("should i buy nvda", ("NVDA",), "single"),
+    ("Should I sell aapl or wait", ("AAPL",), "single"),
+    ("brk.b vs aapl", ("BRK-B", "AAPL"), "multi"),
+    ("BRK.b vs aapl", ("BRK-B", "AAPL"), "multi"),     # mixed case
+    ("compare amd vs intc vs nvda", ("AMD", "INTC", "NVDA"), "multi"),
+])
+def test_parse_prompt_recognises_lowercase_tickers(
+    prompt, expected_tickers, expected_intent,
+):
+    """Users naturally type lowercase. The parser used to be case-sensitive
+    and quietly mis-routed lowercase prompts to the screen path."""
+    result = parse_prompt(prompt, universe=UNIVERSE)
+    assert result.tickers == expected_tickers
+    assert result.intent == expected_intent

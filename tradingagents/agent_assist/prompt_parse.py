@@ -12,9 +12,12 @@ from typing import Iterable, Literal
 
 
 # Match plain symbols and exchange-qualified forms.
-# - 1-5 letter all-caps base
+# - 1-5 letter base
 # - optional .X / -X suffix (BRK.B, RY.TO; CSV uses BRK-B)
-_TICKER_RE = re.compile(r"\b[A-Z]{1,5}(?:[.\-][A-Z]{1,2})?\b")
+# Case-insensitive: users naturally type lowercase ("nvda", "brk.b") and
+# would otherwise miss out on the single/multi-ticker fast paths.
+# ``normalize_ticker`` canonicalises each match before universe lookup.
+_TICKER_RE = re.compile(r"\b[A-Za-z]{1,5}(?:[.\-][A-Za-z]{1,2})?\b")
 
 _HOLD_RE = re.compile(
     r"\b(?:sell|wait|hold|holding|dump|keep|cut|trim)\b|add to",

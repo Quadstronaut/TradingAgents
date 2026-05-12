@@ -329,6 +329,46 @@ def _resolve_price(
     return _price(ticker)
 
 
+def _shortlist_round(
+    llm,
+    user_prompt: str,
+    universe: pd.DataFrame,
+    budget: Optional[int],
+    exclude: list[str],
+    *,
+    precomputed_prices: Optional[dict[str, float]] = None,
+) -> tuple[list[PricedCandidate], list[str]]:
+    """Single LLM round: ask for picks, filter by price, return (kept, rejected).
+
+    Shared by initial pass and reprompt — same logic for both rounds keeps
+    the two-attempt contract honest: any survivor from either round
+    deserves to reach the caller.
+    """
+    prompt = _build_prompt(
+        user_prompt, universe, budget,
+        exclude=exclude or None,
+        prices=precomputed_prices,
+    )
+    result: ShortList = llm.invoke(prompt)
+
+    kept: list[PricedCandidate] = []
+    rejected: list[str] = []
+    for cand in result.candidates:
+        price = _resolve_price(cand.ticker, precomputed_prices)
+        if price is None:
+            rejected.append(cand.ticker)
+            continue
+        if budget is not None and price > budget:
+            rejected.append(cand.ticker)
+            continue
+        kept.append(PricedCandidate(
+            ticker=cand.ticker,
+            reasoning=cand.reasoning,
+            last_price=price,
+        ))
+    return kept, rejected
+
+
 def shortlist(
     user_prompt: str,
     universe: pd.DataFrame,
@@ -349,80 +389,26 @@ def shortlist(
 
     Returns:
         List of PricedCandidate, possibly empty if nothing survives the filter
-        even after one reprompt.
+        even after one reprompt. May return 1 candidate when the reprompt
+        also yields too few — better to show one valid pick than nothing.
     """
     llm = _build_llm()
 
-    rejected: list[str] = []
-    for attempt in range(2):  # initial + one reprompt
-        prompt = _build_prompt(
-            user_prompt, universe, budget,
-            exclude=rejected or None,
-            prices=precomputed_prices,
-        )
-        result: ShortList = llm.invoke(prompt)
-
-        priced: list[PricedCandidate] = []
-        attempt_rejected: list[str] = []
-        for cand in result.candidates:
-            price = _resolve_price(cand.ticker, precomputed_prices)
-            if price is None:
-                attempt_rejected.append(cand.ticker)
-                continue
-            if budget is not None and price > budget:
-                attempt_rejected.append(cand.ticker)
-                continue
-            priced.append(PricedCandidate(
-                ticker=cand.ticker,
-                reasoning=cand.reasoning,
-                last_price=price,
-            ))
-
-        if len(priced) >= 2:
-            return priced
-
-        # First-pass survivors are too few — reprompt once with the rejects flagged.
-        rejected.extend(attempt_rejected)
-        if attempt == 0 and priced:
-            # Carry over any single survivor from the first pass so we can pad with one more.
-            survivors_to_keep = priced
-            second = shortlist_round_two(
-                llm, user_prompt, universe, budget, rejected,
-                precomputed_prices=precomputed_prices,
-            )
-            return _merge_dedup(survivors_to_keep, second)
-
-    return []
-
-
-def shortlist_round_two(
-    llm,
-    user_prompt,
-    universe,
-    budget,
-    exclude,
-    *,
-    precomputed_prices: Optional[dict[str, float]] = None,
-) -> list[PricedCandidate]:
-    """Helper for reprompt-only execution; same shape as shortlist() inner loop."""
-    prompt = _build_prompt(
-        user_prompt, universe, budget, exclude=exclude,
-        prices=precomputed_prices,
+    first, rejected = _shortlist_round(
+        llm, user_prompt, universe, budget, exclude=[],
+        precomputed_prices=precomputed_prices,
     )
-    result: ShortList = llm.invoke(prompt)
-    out: list[PricedCandidate] = []
-    for cand in result.candidates:
-        price = _resolve_price(cand.ticker, precomputed_prices)
-        if price is None:
-            continue
-        if budget is not None and price > budget:
-            continue
-        out.append(PricedCandidate(
-            ticker=cand.ticker,
-            reasoning=cand.reasoning,
-            last_price=price,
-        ))
-    return out
+    if len(first) >= 2:
+        return first
+
+    # Reprompt with the rejects flagged. Merge with whatever survived the
+    # first round so a valid pick is never thrown away just because the
+    # reprompt couldn't find a partner for it.
+    second, _ = _shortlist_round(
+        llm, user_prompt, universe, budget, exclude=rejected,
+        precomputed_prices=precomputed_prices,
+    )
+    return _merge_dedup(first, second)
 
 
 def _merge_dedup(a: list[PricedCandidate], b: list[PricedCandidate]) -> list[PricedCandidate]:

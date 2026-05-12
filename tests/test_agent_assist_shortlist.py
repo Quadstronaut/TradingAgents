@@ -115,6 +115,53 @@ def test_shortlist_returns_empty_when_no_survivors_after_reprompt():
 
 
 @pytest.mark.unit
+def test_shortlist_returns_lone_survivor_from_reprompt_when_first_pass_empty():
+    """Pre-fix: if attempt 0 yields zero survivors and the reprompt yields
+    exactly one, the loop fell through and discarded it. Better to show
+    the user one valid pick than nothing.
+    """
+    # Pass 1: AMD ($142), PLTR ($187) — both over $100 → priced=[]
+    # Pass 2: INTC ($24) lonely — survives, but pre-fix code returned []
+    fake_llm = _llm_returning([
+        [{"ticker": "AMD", "reasoning": "x"}, {"ticker": "PLTR", "reasoning": "y"}],
+        [{"ticker": "INTC", "reasoning": "z"}, {"ticker": "AAL", "reasoning": "w"}],
+    ])
+    with patch("tradingagents.agent_assist.shortlist._build_llm", return_value=fake_llm), \
+         patch("tradingagents.agent_assist.shortlist._price",
+               side_effect=_mock_price({
+                   "AMD": 142.0, "PLTR": 187.0,  # over budget on pass 1
+                   "INTC": 24.0, "AAL": 114.0,    # only INTC survives on pass 2
+               })):
+        result = shortlist("tech under $100", UNIVERSE_DF, budget=100)
+
+    tickers = [c.ticker for c in result]
+    assert tickers == ["INTC"]
+
+
+@pytest.mark.unit
+def test_shortlist_merge_dedupes_repeats_across_rounds():
+    """If the reprompt names a ticker already kept from pass 1, the merge
+    must dedupe — don't show the same ticker twice in the shortlist."""
+    fake_llm = _llm_returning([
+        # Pass 1: INTC survives, AMD over budget
+        [{"ticker": "AMD", "reasoning": "x"}, {"ticker": "INTC", "reasoning": "y"}],
+        # Pass 2: LLM repeats INTC and adds PLTR
+        [{"ticker": "INTC", "reasoning": "repeat"}, {"ticker": "PLTR", "reasoning": "growth"}],
+    ])
+    with patch("tradingagents.agent_assist.shortlist._build_llm", return_value=fake_llm), \
+         patch("tradingagents.agent_assist.shortlist._price",
+               side_effect=_mock_price({
+                   "AMD": 142.0, "INTC": 24.0, "PLTR": 87.0,
+               })):
+        result = shortlist("tech under $100", UNIVERSE_DF, budget=100)
+
+    tickers = [c.ticker for c in result]
+    assert tickers == ["INTC", "PLTR"]
+    # First-pass reasoning ("y") preserved, not overwritten by second-pass repeat
+    assert result[0].reasoning == "y"
+
+
+@pytest.mark.unit
 def test_shortlist_skips_price_filter_when_budget_is_none():
     fake_llm = _llm_returning([[
         {"ticker": "AMD", "reasoning": "x"},

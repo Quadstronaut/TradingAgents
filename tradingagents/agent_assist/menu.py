@@ -105,7 +105,18 @@ def _ask_int(label: str, minimum: Optional[int] = None) -> int:
         return v
 
 
-def _ask_float(label: str, minimum: Optional[float] = None) -> float:
+def _ask_float(
+    label: str,
+    minimum: Optional[float] = None,
+    *,
+    strict_min: bool = False,
+) -> float:
+    """Prompt for a float; reprompts on non-numeric or out-of-range.
+
+    ``minimum`` is treated as a strict lower bound when ``strict_min`` is
+    True (value must be greater than minimum) — used for share counts
+    where 0 is meaningless ("I hold 0 shares" is not a held position).
+    """
     while True:
         raw = _ask(f"{label}: ").lstrip("$")
         try:
@@ -113,9 +124,13 @@ def _ask_float(label: str, minimum: Optional[float] = None) -> float:
         except ValueError:
             print(f"  '{raw}' is not a number.")
             continue
-        if minimum is not None and v < minimum:
-            print(f"  Must be at least {minimum}.")
-            continue
+        if minimum is not None:
+            if strict_min and v <= minimum:
+                print(f"  Must be greater than {minimum}.")
+                continue
+            if not strict_min and v < minimum:
+                print(f"  Must be at least {minimum}.")
+                continue
         return v
 
 
@@ -165,7 +180,12 @@ def _collect_budget() -> Task:
 
 def _collect_owned() -> Task:
     ticker = _ask_ticker()
-    shares = _ask_float(f"How many shares of {ticker} do you hold?", minimum=0)
+    # 0 shares is not a held position — strict_min so the PM prompt never
+    # sees "User currently holds 0 shares of NVDA".
+    shares = _ask_float(
+        f"How many shares of {ticker} do you hold?",
+        minimum=0, strict_min=True,
+    )
     cost_basis = _ask_float("Cost basis per share ($)", minimum=0)
     return Task(intent="owned", ticker=ticker, shares=shares, cost_basis=cost_basis)
 

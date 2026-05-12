@@ -40,6 +40,19 @@ def test_owned_flow_collects_all_three_slots():
 
 
 @pytest.mark.unit
+def test_owned_flow_rejects_zero_shares(capsys):
+    """0 shares is not a held position — _collect_owned must reprompt."""
+    # 0 → reprompt → 10 → cost basis 100 → confirm
+    with _inputs("4", "NVDA", "0", "10", "100", "y"):
+        task = menu.run_menu()
+    assert task is not None
+    assert task.intent == "owned"
+    assert task.shares == 10
+    out = capsys.readouterr().out
+    assert "greater than 0" in out
+
+
+@pytest.mark.unit
 def test_compare_rejects_same_ticker_twice():
     with _inputs("5", "NVDA", "NVDA", "AMD", "y"):
         task = menu.run_menu()

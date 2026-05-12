@@ -242,6 +242,13 @@ def run_news_scan(ticker: str, *, output_dir: Path) -> int:
             ps.finish()
     except KeyboardInterrupt:
         raise
+    except Exception as exc:
+        # Match _run_one_deep's failure-mode contract: log full traceback,
+        # surface a one-line message, return non-zero exit code. Don't write
+        # a partial summary — there's nothing useful to capture on failure.
+        logger.exception("news_scan failed for %s", ticker)
+        print(f"\nNews scan failed for {ticker}: {exc}")
+        return 4
 
     verdict_md = final_state.get("final_trade_decision", "")
     # Persist a one-file summary alongside the regular agent_assist outputs.

@@ -13,7 +13,7 @@ broke silently if the verdict renderer ever shifted lines. The capture
 list pattern reads the typed object back directly.
 """
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -23,6 +23,7 @@ from tradingagents.agent_assist.news_scan import (
     _create_verdict_node,
     _render_verdict,
     _scoped_dataflow_config,
+    run_news_scan,
 )
 from tradingagents.dataflows.config import get_config, set_config
 
@@ -173,3 +174,79 @@ def test_verdict_node_accumulates_multiple_invocations_in_capture():
     node(state)
     assert captured == [v1, v2]
     assert captured[-1] is v2
+
+
+# ---------------------------------------------------------------------------
+# run_news_scan failure-mode contract: match _run_one_deep
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def _patch_news_scan_internals():
+    """Patch the heavyweight bits of run_news_scan so we can drive failure
+    modes without touching real LLMs, real progress UI, or real graph state.
+
+    Yields a dict the test can read/mutate to configure the fake graph's
+    stream behavior."""
+    fake_graph = MagicMock()
+    cfg = {}
+
+    def _set_stream(stream_factory):
+        fake_graph.stream.side_effect = stream_factory
+
+    with patch(
+        "tradingagents.agent_assist.news_scan._build_llms",
+        return_value=(MagicMock(), MagicMock()),
+    ), patch(
+        "tradingagents.agent_assist.news_scan._build_graph",
+        return_value=fake_graph,
+    ):
+        yield {"graph": fake_graph, "set_stream": _set_stream, "cfg": cfg}
+
+
+@pytest.mark.unit
+def test_run_news_scan_returns_4_on_unexpected_exception(
+    _patch_news_scan_internals, tmp_path, capsys,
+):
+    """LLM connection drop, schema rejection, etc. should not crash the
+    process — log and return exit 4, matching _run_one_deep's contract."""
+    def _boom(*args, **kwargs):
+        raise RuntimeError("simulated graph failure")
+    _patch_news_scan_internals["graph"].stream.side_effect = _boom
+
+    rc = run_news_scan("NVDA", output_dir=tmp_path)
+    assert rc == 4
+    out = capsys.readouterr().out
+    assert "NVDA" in out
+    assert "simulated graph failure" in out
+    # No partial summary written
+    assert list(tmp_path.glob("*.md")) == []
+
+
+@pytest.mark.unit
+def test_run_news_scan_propagates_keyboard_interrupt(
+    _patch_news_scan_internals, tmp_path,
+):
+    """Ctrl-C must still raise so the menu loop can handle it cleanly —
+    the broad except must not swallow it."""
+    def _interrupt(*args, **kwargs):
+        raise KeyboardInterrupt()
+    _patch_news_scan_internals["graph"].stream.side_effect = _interrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        run_news_scan("NVDA", output_dir=tmp_path)
+
+
+@pytest.mark.unit
+def test_run_news_scan_dataflow_config_restored_after_failure(
+    _patch_news_scan_internals, tmp_path,
+):
+    """The scoped-config context manager must restore state even when the
+    flow fails partway through — the broader except sits *outside* the
+    context, so __exit__ has already run by the time we catch."""
+    initial = get_config()
+    _patch_news_scan_internals["graph"].stream.side_effect = RuntimeError("boom")
+
+    rc = run_news_scan("INTC", output_dir=tmp_path)
+    assert rc == 4
+    assert get_config()["llm_provider"] == initial["llm_provider"]

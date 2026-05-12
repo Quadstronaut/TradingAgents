@@ -11,6 +11,7 @@ from tradingagents.agent_assist.shortlist import (
     Candidate,
     ShortList,
     _CACHE_RETENTION_DAYS,
+    _format_universe,
     _purge_stale_price_caches,
     bulk_price,
     shortlist,
@@ -378,6 +379,39 @@ def test_purge_tolerates_malformed_date_in_filename(tmp_path):
 def test_purge_returns_zero_when_cache_dir_missing(tmp_path):
     missing = tmp_path / "does-not-exist"
     assert _purge_stale_price_caches(missing) == 0
+
+
+# ---------------------------------------------------------------------------
+# _format_universe: NaN-safe rendering
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_format_universe_renders_nan_sector_as_dash():
+    """Rows with NaN sector (13 in the bundled CSV) must not produce the
+    literal string 'nan' in the LLM prompt — the model would pattern-match
+    on it as if it were a real category."""
+    df = pd.DataFrame([
+        {"ticker": "ALNY", "name": "Alnylam Pharmaceuticals", "sector": float("nan")},
+        {"ticker": "NVDA", "name": "NVIDIA", "sector": "Tech"},
+    ])
+    out = _format_universe(df)
+    # Each ticker on its own line; NaN replaced with —, real sector preserved.
+    assert "ALNY | Alnylam Pharmaceuticals | —" in out
+    assert "NVDA | NVIDIA | Tech" in out
+    # Crucially, the literal 'nan' must not leak through anywhere.
+    assert "nan" not in out.lower().split("|")[0]
+
+
+@pytest.mark.unit
+def test_format_universe_nan_safe_with_prices():
+    df = pd.DataFrame([
+        {"ticker": "ARM", "name": "Arm Holdings", "sector": float("nan")},
+        {"ticker": "AMD", "name": "Advanced Micro Devices", "sector": "Tech"},
+    ])
+    out = _format_universe(df, prices={"ARM": 120.0, "AMD": 142.0})
+    assert "ARM | Arm Holdings | — | $120.00" in out
+    assert "AMD | Advanced Micro Devices | Tech | $142.00" in out
 
 
 @pytest.mark.unit

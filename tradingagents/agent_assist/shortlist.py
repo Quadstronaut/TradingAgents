@@ -255,6 +255,19 @@ def _build_llm():
     return llm.with_structured_output(ShortList)
 
 
+def _safe_cell(value) -> str:
+    """Render a DataFrame cell value safely for the LLM prompt.
+
+    ``pd.read_csv`` leaves missing values as ``NaN`` (a float); naive f-string
+    interpolation produces the literal text ``nan``, which the LLM may then
+    match on as if it were a real sector/industry name. Replace with an em-
+    dash so the prompt clearly conveys "no value here".
+    """
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return "—"
+    return str(value)
+
+
 def _format_universe(
     universe: pd.DataFrame,
     prices: Optional[dict[str, float]] = None,
@@ -269,10 +282,13 @@ def _format_universe(
         for r in universe.itertuples(index=False):
             p = prices.get(r.ticker)
             price_col = f"${p:.2f}" if p is not None else "?"
-            rows.append(f"{r.ticker} | {r.name} | {r.sector} | {price_col}")
+            rows.append(
+                f"{_safe_cell(r.ticker)} | {_safe_cell(r.name)} | "
+                f"{_safe_cell(r.sector)} | {price_col}"
+            )
         return "\n".join(rows)
     rows = (
-        f"{r.ticker} | {r.name} | {r.sector}"
+        f"{_safe_cell(r.ticker)} | {_safe_cell(r.name)} | {_safe_cell(r.sector)}"
         for r in universe.itertuples(index=False)
     )
     return "\n".join(rows)

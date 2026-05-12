@@ -213,6 +213,11 @@ def _scoped_dataflow_config(cfg: dict) -> Iterator[None]:
 
 def run_news_scan(ticker: str, *, output_dir: Path) -> int:
     """Execute the news-scan flow with live progress; write a summary."""
+    # Validate ticker as a safe path component up front: fail fast on a
+    # malicious value before spinning up the graph / LLM clients. Per
+    # CLAUDE.md path-safety rule. Raises ValueError on bad input.
+    safe_ticker_component(ticker)
+
     today = datetime.date.today().isoformat()
     quick, deep = _build_llms()
     captured: list[NewsVerdict] = []
@@ -252,14 +257,26 @@ def run_news_scan(ticker: str, *, output_dir: Path) -> int:
         return 4
 
     verdict_md = final_state.get("final_trade_decision", "")
+    # Graph completed but yielded no Verdict node output → degraded result.
+    # Match _run_one_deep's failure contract: don't pretend success with an
+    # empty stub file. Log, surface, return 4.
+    if not captured and not verdict_md:
+        logger.warning(
+            "news_scan for %s produced no verdict (graph yielded no output)",
+            ticker,
+        )
+        print(
+            f"\nNews scan for {ticker} produced no verdict — "
+            "the graph short-circuited before the Verdict node."
+        )
+        return 4
+
     # Persist a one-file summary alongside the regular agent_assist outputs.
+    # ``ticker`` was validated at function entry, so use it directly.
     output_dir = Path(output_dir).expanduser()
     output_dir.mkdir(parents=True, exist_ok=True)
     ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    # Per CLAUDE.md path-safety rule: anything user/LLM-influenced that ends
-    # up in a filesystem path must round-trip through safe_ticker_component.
-    safe = safe_ticker_component(ticker)
-    out = output_dir / f"{ts}-news-scan-{safe}.md"
+    out = output_dir / f"{ts}-news-scan-{ticker}.md"
     body = "\n".join([
         f"# News scan — {ticker} — {ts}",
         "",

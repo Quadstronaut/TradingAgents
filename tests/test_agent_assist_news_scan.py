@@ -264,3 +264,23 @@ def test_run_news_scan_rejects_path_traversal_ticker(
         run_news_scan("../etc/passwd", output_dir=tmp_path)
     # No file created in tmp_path or above it
     assert not list(tmp_path.glob("*"))
+
+
+@pytest.mark.unit
+def test_run_news_scan_returns_4_when_no_verdict_captured(
+    _patch_news_scan_internals, tmp_path, capsys,
+):
+    """If the graph stream completes but produces no Verdict output
+    (empty stream, short-circuit, etc.), match _run_one_deep's contract:
+    return 4 and don't write a misleading '(no verdict)' stub file."""
+    # Empty stream — no values, no updates, no verdict captured
+    _patch_news_scan_internals["graph"].stream.return_value = iter([])
+
+    rc = run_news_scan("NVDA", output_dir=tmp_path)
+
+    assert rc == 4
+    out = capsys.readouterr().out
+    assert "NVDA" in out
+    assert "no verdict" in out.lower()
+    # No file written
+    assert not list(tmp_path.glob("*.md"))

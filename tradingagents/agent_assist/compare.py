@@ -78,6 +78,11 @@ def run_compare(
     ``deep_runner`` and ``summary_writer`` are injected to avoid a circular
     import with the orchestrator module.
     """
+    # Validate both tickers as safe path components before spinning up the
+    # 30+ min deep run pair. Per CLAUDE.md path-safety rule. Raises ValueError.
+    safe_ticker_component(ticker_a)
+    safe_ticker_component(ticker_b)
+
     today = datetime.date.today().isoformat()
 
     print(f"=== Compare: {ticker_a} vs {ticker_b} ===")
@@ -109,13 +114,11 @@ def run_compare(
     )
 
     # Build a comparison-aware summary alongside the regular ranked summary.
+    # Tickers validated at function entry; use directly.
     output_dir = Path(output_dir).expanduser()
     output_dir.mkdir(parents=True, exist_ok=True)
     ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    # Per CLAUDE.md: ticker components in paths must go through safe_ticker_component.
-    safe_a = safe_ticker_component(ticker_a)
-    safe_b = safe_ticker_component(ticker_b)
-    out = output_dir / f"{ts}-compare-{safe_a}-vs-{safe_b}.md"
+    out = output_dir / f"{ts}-compare-{ticker_a}-vs-{ticker_b}.md"
 
     pick_line = (
         f"**Pick:** {winner_ticker}" if winner_ticker

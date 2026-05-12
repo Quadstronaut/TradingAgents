@@ -69,8 +69,30 @@ class NewsVerdict(BaseModel):
     )
 
 
-def _create_verdict_node(deep_llm):
-    """Verdict node: read the two reports, emit a structured verdict."""
+def _render_verdict(verdict: NewsVerdict, ticker: str) -> str:
+    """Single source of truth for the verdict markdown layout.
+
+    Used by the Verdict node to populate ``final_trade_decision`` on graph
+    state, and indirectly by the file-output assembly. Keep the rendered
+    layout stable here — the typed verdict is captured separately so the
+    terminal tail summary does not parse this string.
+    """
+    return (
+        f"## News & sentiment scan for {ticker}\n\n"
+        f"**Lean:** {verdict.lean}  ·  **Confidence:** {verdict.confidence:.2f}\n\n"
+        f"{verdict.summary}\n\n"
+        "_This is a read, not a buy/hold/sell recommendation._"
+    )
+
+
+def _create_verdict_node(deep_llm, capture: list):
+    """Verdict node: read the two reports, emit a structured verdict.
+
+    Appends the typed :class:`NewsVerdict` to ``capture`` so the caller can
+    read it back without parsing the rendered markdown. LangGraph's
+    AgentState TypedDict doesn't declare a slot for the typed object and
+    we don't want to pollute the shared schema for one flow's use.
+    """
     structured = deep_llm.with_structured_output(NewsVerdict)
 
     def verdict_node(state):
@@ -90,26 +112,21 @@ def _create_verdict_node(deep_llm):
             f"{news_report}\n"
         )
         verdict: NewsVerdict = structured.invoke(prompt)
-        rendered = (
-            f"## News & sentiment scan for {ticker}\n\n"
-            f"**Lean:** {verdict.lean}  ·  **Confidence:** {verdict.confidence:.2f}\n\n"
-            f"{verdict.summary}\n\n"
-            "_This is a read, not a buy/hold/sell recommendation._"
-        )
+        capture.append(verdict)
         return {
             "messages": state["messages"],
-            "final_trade_decision": rendered,
+            "final_trade_decision": _render_verdict(verdict, ticker),
         }
 
     return verdict_node
 
 
-def _build_graph(quick_llm, deep_llm):
+def _build_graph(quick_llm, deep_llm, capture: list):
     cond = ConditionalLogic()
 
     social = create_social_media_analyst(quick_llm)
     news = create_news_analyst(quick_llm)
-    verdict = _create_verdict_node(deep_llm)
+    verdict = _create_verdict_node(deep_llm, capture)
     clear_s = create_msg_delete()
     clear_n = create_msg_delete()
 
@@ -197,7 +214,8 @@ def run_news_scan(ticker: str, *, output_dir: Path) -> int:
     """Execute the news-scan flow with live progress; write a summary."""
     today = datetime.date.today().isoformat()
     quick, deep = _build_llms()
-    graph = _build_graph(quick, deep)
+    captured: list[NewsVerdict] = []
+    graph = _build_graph(quick, deep, captured)
     cfg = _build_dataflow_config()
 
     state = ProgressState(
@@ -251,7 +269,12 @@ def run_news_scan(ticker: str, *, output_dir: Path) -> int:
 
     print()
     print(f"=== Summary written: {out} ===")
-    if verdict_md:
-        first_line = verdict_md.splitlines()[2] if len(verdict_md.splitlines()) > 2 else ""
-        print(f"  {ticker:<8} {first_line}")
+    if captured:
+        v = captured[-1]
+        print(f"  {ticker:<8} {v.lean} (confidence {v.confidence:.2f})")
+    elif verdict_md:
+        # Verdict produced but the closure capture path didn't run (shouldn't
+        # happen unless the graph short-circuited the Verdict node). The
+        # markdown file is on disk; just don't try to summarise the tail.
+        print(f"  {ticker:<8} (verdict written; see file)")
     return 0

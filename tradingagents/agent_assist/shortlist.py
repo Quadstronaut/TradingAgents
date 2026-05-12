@@ -37,6 +37,12 @@ DEFAULT_PRICE_CACHE_DIR = Path.home() / ".tradingagents" / "agent_assist_prices"
 # yfinance recommends chunking large symbol lists; 200 is well under any limit.
 _BULK_CHUNK = 200
 
+# Day-scoped cache files older than this are purged on each bulk_price call.
+# Keeps the cache dir from accumulating one stale file per day indefinitely.
+_CACHE_RETENTION_DAYS = 7
+_CACHE_PREFIX = "prices_"
+_CACHE_EXT = ".json"
+
 
 class Candidate(BaseModel):
     ticker: str = Field(description="Ticker symbol from the supplied universe.")
@@ -83,7 +89,40 @@ def _today_iso(today: Optional[_dt.date] = None) -> str:
 
 
 def _cache_path(cache_dir: Path, today: Optional[_dt.date] = None) -> Path:
-    return cache_dir / f"prices_{_today_iso(today)}.json"
+    return cache_dir / f"{_CACHE_PREFIX}{_today_iso(today)}{_CACHE_EXT}"
+
+
+def _purge_stale_price_caches(
+    cache_dir: Path,
+    *,
+    retention_days: int = _CACHE_RETENTION_DAYS,
+    today: Optional[_dt.date] = None,
+) -> int:
+    """Delete ``prices_YYYY-MM-DD.json`` files older than ``retention_days``.
+
+    Returns the count of files deleted. Failures (missing dir, permission
+    denied on one file, malformed names) are logged at debug and otherwise
+    swallowed — cache cleanup must never block the calling flow.
+    """
+    if not cache_dir.exists():
+        return 0
+    today = today or _dt.date.today()
+    cutoff = today - _dt.timedelta(days=retention_days)
+    deleted = 0
+    for p in cache_dir.glob(f"{_CACHE_PREFIX}*{_CACHE_EXT}"):
+        date_str = p.stem[len(_CACHE_PREFIX):]
+        try:
+            file_date = _dt.date.fromisoformat(date_str)
+        except ValueError:
+            logger.debug("skipping non-date price cache file: %s", p)
+            continue
+        if file_date < cutoff:
+            try:
+                p.unlink()
+                deleted += 1
+            except OSError as exc:
+                logger.debug("could not delete stale cache %s: %s", p, exc)
+    return deleted
 
 
 def _read_price_cache(path: Path) -> dict[str, float]:
@@ -185,6 +224,7 @@ def bulk_price(
     the returned dict. Callers should treat missing keys as "no price".
     """
     cache_dir = cache_dir or DEFAULT_PRICE_CACHE_DIR
+    _purge_stale_price_caches(cache_dir, today=today)
     path = _cache_path(cache_dir, today)
     tickers = list(dict.fromkeys(tickers))  # dedupe, preserve order
 

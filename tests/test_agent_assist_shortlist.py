@@ -10,6 +10,8 @@ import pytest
 from tradingagents.agent_assist.shortlist import (
     Candidate,
     ShortList,
+    _CACHE_RETENTION_DAYS,
+    _purge_stale_price_caches,
     bulk_price,
     shortlist,
 )
@@ -261,3 +263,93 @@ def test_bulk_price_handles_yesterdays_cache_as_a_miss(tmp_path):
 
     assert result == {"AMD": 142.0}  # not the stale 99.0
     bulk.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# _purge_stale_price_caches: GC of accumulated day-scoped cache files
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_purge_deletes_files_older_than_retention_days(tmp_path):
+    today = _dt.date(2026, 5, 11)
+    # Files: today, recent (within retention), stale (past retention), ancient
+    cases = {
+        f"prices_{today.isoformat()}.json": True,                                   # today → keep
+        f"prices_{(today - _dt.timedelta(days=1)).isoformat()}.json": True,         # yday → keep
+        f"prices_{(today - _dt.timedelta(days=_CACHE_RETENTION_DAYS)).isoformat()}.json": True,
+        # exactly retention_days old → keep (cutoff is strictly older)
+        f"prices_{(today - _dt.timedelta(days=_CACHE_RETENTION_DAYS + 1)).isoformat()}.json": False,
+        f"prices_{(today - _dt.timedelta(days=30)).isoformat()}.json": False,        # stale → delete
+        f"prices_{(today - _dt.timedelta(days=365)).isoformat()}.json": False,       # ancient → delete
+    }
+    for fname in cases:
+        (tmp_path / fname).write_text("{}", encoding="utf-8")
+
+    deleted = _purge_stale_price_caches(tmp_path, today=today)
+
+    assert deleted == sum(1 for keep in cases.values() if not keep)
+    for fname, should_keep in cases.items():
+        assert (tmp_path / fname).exists() is should_keep, fname
+
+
+@pytest.mark.unit
+def test_purge_ignores_non_prices_files(tmp_path):
+    """Other files in the cache dir must be left alone."""
+    today = _dt.date(2026, 5, 11)
+    (tmp_path / "README.md").write_text("docs", encoding="utf-8")
+    (tmp_path / "prices.json").write_text("{}", encoding="utf-8")  # missing _DATE suffix
+    (tmp_path / f"prices_{(today - _dt.timedelta(days=365)).isoformat()}.json").write_text(
+        "{}", encoding="utf-8"
+    )
+    (tmp_path / "random_2020-01-01.json").write_text("{}", encoding="utf-8")
+
+    deleted = _purge_stale_price_caches(tmp_path, today=today)
+
+    assert deleted == 1  # only the prices_<ancient-date>.json
+    assert (tmp_path / "README.md").exists()
+    assert (tmp_path / "prices.json").exists()
+    assert (tmp_path / "random_2020-01-01.json").exists()
+
+
+@pytest.mark.unit
+def test_purge_tolerates_malformed_date_in_filename(tmp_path):
+    """A prices_*.json with a non-date suffix must be skipped, not crash."""
+    today = _dt.date(2026, 5, 11)
+    (tmp_path / "prices_NOT-A-DATE.json").write_text("{}", encoding="utf-8")
+    (tmp_path / f"prices_{(today - _dt.timedelta(days=30)).isoformat()}.json").write_text(
+        "{}", encoding="utf-8"
+    )
+
+    deleted = _purge_stale_price_caches(tmp_path, today=today)
+
+    assert deleted == 1
+    assert (tmp_path / "prices_NOT-A-DATE.json").exists()
+
+
+@pytest.mark.unit
+def test_purge_returns_zero_when_cache_dir_missing(tmp_path):
+    missing = tmp_path / "does-not-exist"
+    assert _purge_stale_price_caches(missing) == 0
+
+
+@pytest.mark.unit
+def test_bulk_price_purges_stale_caches_on_invocation(tmp_path):
+    """Integration: calling bulk_price triggers the GC. A 30-day-old file
+    sitting in the cache dir should be gone after one bulk_price call."""
+    today = _dt.date.today()
+    ancient = (today - _dt.timedelta(days=30)).isoformat()
+    (tmp_path / f"prices_{ancient}.json").write_text(
+        json.dumps({"AMD": 1.0}), encoding="utf-8"
+    )
+    assert (tmp_path / f"prices_{ancient}.json").exists()
+
+    with patch(
+        "tradingagents.agent_assist.shortlist._yf_bulk_download",
+        side_effect=_fake_bulk_download({"AMD": 142.0}),
+    ):
+        bulk_price(["AMD"], cache_dir=tmp_path)
+
+    assert not (tmp_path / f"prices_{ancient}.json").exists()
+    # Today's file should be present (bulk_price wrote it after fetching)
+    assert (tmp_path / f"prices_{today.isoformat()}.json").exists()

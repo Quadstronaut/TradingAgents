@@ -158,4 +158,11 @@ def run_compare(
     print(f"  {ticker_b:<8} {result_b.rating}")
     if winner_ticker:
         print(f"  pick: {winner_ticker}")
+    # Match the failure-mode contract of _run_specific / _run_owned /
+    # _run_freeform: return 4 when one or both deep runs failed so the
+    # process exit code reflects reality. The summary file is still
+    # written with the partial results — exit code reflects success
+    # of the analysis, not of the write.
+    if result_a.rating == "FAILED" or result_b.rating == "FAILED":
+        return 4
     return 0

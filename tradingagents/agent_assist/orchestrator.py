@@ -196,7 +196,6 @@ def _run_shortlist_flow(
     budget: Optional[int],
     universe_df: pd.DataFrame,
     output_dir: Path,
-    position_first_str: str = "",
     summary_prompt_label: Optional[str] = None,
     precomputed_prices: Optional[dict[str, float]] = None,
     empty_diagnostic: Optional[str] = None,
@@ -216,7 +215,7 @@ def _run_shortlist_flow(
     config = _build_config()
     today = datetime.date.today().isoformat()
 
-    for i, c in enumerate(candidates):
+    for c in candidates:
         choice = _confirm_run(c.ticker)
         if choice == "s":
             results.append(RunResult(ticker=c.ticker, rating="SKIPPED", log_path=None, error=None))
@@ -225,9 +224,7 @@ def _run_shortlist_flow(
             print(f"Aborting before {c.ticker}.")
             break
 
-        # Position context only flows into the first ticker (legacy behaviour).
-        pos = position_first_str if i == 0 else ""
-        result = _run_one_deep(c.ticker, today=today, position_str=pos, config=config)
+        result = _run_one_deep(c.ticker, today=today, config=config)
         results.append(result)
 
     summary_path = write_summary(

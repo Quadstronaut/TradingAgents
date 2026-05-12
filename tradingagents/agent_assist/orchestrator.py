@@ -275,6 +275,11 @@ def _run_specific(task: Task, *, output_dir: Path) -> int:
 
 
 def _run_owned(task: Task, *, output_dir: Path) -> int:
+    if task.shares is None or task.cost_basis is None:
+        raise ValueError(
+            "owned intent requires both shares and cost_basis "
+            f"(got shares={task.shares!r}, cost_basis={task.cost_basis!r})"
+        )
     today = datetime.date.today().isoformat()
     pos = (
         f"User currently holds {task.shares:g} shares of {task.ticker} "

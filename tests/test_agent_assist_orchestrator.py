@@ -421,6 +421,27 @@ def test_multi_ticker_freeform_reprompts_on_invalid_then_accepts(
 
 
 @pytest.mark.unit
+def test_run_owned_raises_clear_error_when_shares_missing(
+    fake_graph, universe_loader, tmp_path,
+):
+    """A programmatic Task(intent='owned', ticker='X') without shares or
+    cost_basis used to crash with a cryptic TypeError on the :g format.
+    Now raises ValueError with the missing fields named."""
+    task = Task(intent="owned", ticker="NVDA")  # shares + cost_basis omitted
+    with pytest.raises(ValueError, match="shares and cost_basis"):
+        run_task(task, output_dir=tmp_path)
+
+
+@pytest.mark.unit
+def test_run_owned_raises_when_only_cost_basis_missing(
+    fake_graph, universe_loader, tmp_path,
+):
+    task = Task(intent="owned", ticker="NVDA", shares=50)
+    with pytest.raises(ValueError, match="shares and cost_basis"):
+        run_task(task, output_dir=tmp_path)
+
+
+@pytest.mark.unit
 def test_run_task_normalises_specific_ticker_before_propagate(
     fake_graph, universe_loader, tmp_path
 ):

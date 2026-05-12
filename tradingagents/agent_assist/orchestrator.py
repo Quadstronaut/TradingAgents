@@ -16,7 +16,6 @@ from __future__ import annotations
 import dataclasses
 import datetime
 import logging
-import re
 from importlib.resources import files
 from pathlib import Path
 from typing import Optional
@@ -51,22 +50,6 @@ from tradingagents.graph.trading_graph import TradingAgentsGraph
 
 logger = logging.getLogger(__name__)
 
-
-_RATING_RE = re.compile(
-    r"FINAL TRANSACTION PROPOSAL:\s*\*\*\s*(Buy|Overweight|Hold|Underweight|Sell)\s*\*\*",
-    re.IGNORECASE,
-)
-_FALLBACK_RATING_RE = re.compile(
-    r"\*\*\s*(Buy|Overweight|Hold|Underweight|Sell)\s*\*\*",
-    re.IGNORECASE,
-)
-_RATING_CANONICAL = {
-    "buy": "Buy",
-    "overweight": "Overweight",
-    "hold": "Hold",
-    "underweight": "Underweight",
-    "sell": "Sell",
-}
 
 # Per-deep-run estimate used to populate the progress "est. remaining" hint.
 DEEP_RUN_SECONDS = 15 * 60
@@ -104,25 +87,6 @@ def _confirm_bulk(n: int) -> bool:
         if raw in ("", "n", "no"):
             return False
         print("Please answer y or n.")
-
-
-def _extract_rating(decision_md: str) -> str:
-    """Pull the final rating out of the Portfolio Manager's rendered markdown.
-
-    Strategy: canonical ``FINAL TRANSACTION PROPOSAL: **<Rating>**`` marker
-    first. If that's missing (malformed verdict), fall back to scanning all
-    ``**<Rating>**`` tokens in the doc and returning the **last** one — the
-    verdict is rendered at the end, so the closest-to-end occurrence is the
-    best guess. Defaults to ``Hold`` when nothing matches.
-    """
-    text = decision_md or ""
-    m = _RATING_RE.search(text)
-    if m:
-        return _RATING_CANONICAL[m.group(1).lower()]
-    matches = _FALLBACK_RATING_RE.findall(text)
-    if matches:
-        return _RATING_CANONICAL[matches[-1].lower()]
-    return "Hold"
 
 
 def _build_config() -> dict:
@@ -168,18 +132,22 @@ def _run_one_deep(
                 config=config,
                 progress_callback=ps.on_node_event,
             )
-            _, decision = ta.propagate(
+            # propagate returns (final_state, rating). The rating is the
+            # bare canonical word (Buy/Overweight/Hold/Underweight/Sell)
+            # already extracted by SignalProcessor from the PM's markdown;
+            # the markdown itself lives at final_state["final_trade_decision"].
+            final_state, rating = ta.propagate(
                 ticker,
                 today,
                 additional_portfolio_context=position_str,
             )
             ps.finish()
-        rating = _extract_rating(decision)
+        decision_md = final_state.get("final_trade_decision", "")
         log_dir = Path(config["results_dir"]) / ticker
         print(f"[done] {ticker} -> {rating}")
         return RunResult(
             ticker=ticker, rating=rating, log_path=log_dir, error=None,
-            decision_md=decision,
+            decision_md=decision_md,
         )
     except KeyboardInterrupt:
         raise

@@ -8,7 +8,6 @@ import pytest
 
 from tradingagents.agent_assist.menu import Task
 from tradingagents.agent_assist.orchestrator import (
-    _extract_rating,
     _run_budget,
     _theme_filter,
     main,
@@ -26,9 +25,17 @@ UNIVERSE_DF = pd.DataFrame([
 
 @pytest.fixture
 def fake_graph():
-    """Patches TradingAgentsGraph so propagate() returns canned ratings without LLM calls."""
+    """Patches TradingAgentsGraph so propagate() returns canned ratings without LLM calls.
+
+    The real propagate returns (final_state, rating_word). The rating word
+    is pre-extracted by SignalProcessor — orchestrator uses it verbatim, no
+    further parsing. The markdown lives at final_state["final_trade_decision"].
+    """
     fake = MagicMock()
-    fake.propagate.return_value = ({}, "**Recommendation**: Buy\nFINAL TRANSACTION PROPOSAL: **BUY**")
+    fake.propagate.return_value = (
+        {"final_trade_decision": "**Recommendation**: Buy\nFINAL TRANSACTION PROPOSAL: **BUY**"},
+        "Buy",
+    )
     with patch(
         "tradingagents.agent_assist.orchestrator.TradingAgentsGraph",
         return_value=fake,
@@ -124,7 +131,10 @@ def test_propagate_exception_marks_failed_and_continues(
     ]
     fake_graph.propagate.side_effect = [
         RuntimeError("boom"),
-        ({}, "**Recommendation**: Hold\nFINAL TRANSACTION PROPOSAL: **HOLD**"),
+        (
+            {"final_trade_decision": "**Recommendation**: Hold\nFINAL TRANSACTION PROPOSAL: **HOLD**"},
+            "Hold",
+        ),
     ]
     inputs = ["", "y", "y"]  # budget skip; AMD: y (will fail); INTC: y
     with patch("tradingagents.agent_assist.orchestrator.shortlist", return_value=fake_shortlist), \
@@ -508,8 +518,8 @@ def test_run_task_normalises_both_compare_tickers(
 ):
     """Compare flow takes two tickers — both must be normalised."""
     fake_graph.propagate.side_effect = [
-        ({}, "FINAL TRANSACTION PROPOSAL: **BUY**"),
-        ({}, "FINAL TRANSACTION PROPOSAL: **HOLD**"),
+        ({"final_trade_decision": "FINAL TRANSACTION PROPOSAL: **BUY**"}, "Buy"),
+        ({"final_trade_decision": "FINAL TRANSACTION PROPOSAL: **HOLD**"}, "Hold"),
     ]
     # Mock the compare summariser so we don't hit a real LLM
     from unittest.mock import patch as _patch
@@ -528,70 +538,52 @@ def test_run_task_normalises_both_compare_tickers(
 
 
 # ---------------------------------------------------------------------------
-# _extract_rating: canonical marker + deterministic fallback
+# _run_one_deep: rating + decision_md come from propagate's typed return
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("marker,expected", [
-    ("FINAL TRANSACTION PROPOSAL: **Buy**", "Buy"),
-    ("FINAL TRANSACTION PROPOSAL: **OVERWEIGHT**", "Overweight"),
-    ("FINAL TRANSACTION PROPOSAL: **hold**", "Hold"),
-    ("FINAL TRANSACTION PROPOSAL:  **Underweight** ", "Underweight"),
-    ("final transaction proposal: **Sell**", "Sell"),
-])
-def test_extract_rating_canonical_marker_case_insensitive(marker, expected):
-    assert _extract_rating(f"some prose\n{marker}\n") == expected
-
-
-@pytest.mark.unit
-def test_extract_rating_returns_hold_on_empty_or_none():
-    assert _extract_rating("") == "Hold"
-    assert _extract_rating(None) == "Hold"
-    assert _extract_rating("no rating tokens here at all") == "Hold"
-
-
-@pytest.mark.unit
-def test_extract_rating_fallback_picks_last_match_not_first():
-    """When the canonical marker is missing, the verdict sits at the end of
-    the doc. Mid-doc quotes of other ratings must NOT override the final."""
-    md = (
-        "**Recommendation**: bull says **Buy** but bear says **Sell**.\n"
-        "After weighing both: **Hold** is the right call.\n"
+def test_run_one_deep_uses_propagate_rating_directly(
+    fake_graph, universe_loader, tmp_path,
+):
+    """propagate() returns (final_state, rating_word). The orchestrator must
+    use that rating verbatim — SignalProcessor already extracted it from the
+    PM markdown — instead of re-parsing the markdown (which would receive
+    the bare rating word and fall back to 'Hold')."""
+    fake_graph.propagate.return_value = (
+        {"final_trade_decision": "## PM decision\n\n**Rating**: Sell\n\nstrong sell"},
+        "Sell",
     )
-    assert _extract_rating(md) == "Hold"
+    rc = main(prompt="should I buy NVDA", budget=None, output_dir=tmp_path)
+    assert rc == 0
+    # Find the written summary and assert it carries the Sell rating
+    summaries = list(tmp_path.glob("*.md"))
+    assert len(summaries) == 1
+    content = summaries[0].read_text(encoding="utf-8")
+    assert "| NVDA | Sell |" in content
+    # decision_md is captured from final_state, not the bare rating word
+    # (asserted indirectly via the per-ticker section showing rating only;
+    # decision_md is internal — surfaced to compare flow tests separately)
 
 
 @pytest.mark.unit
-def test_extract_rating_fallback_is_deterministic_across_repeated_calls():
-    """The pre-fix code iterated a Python set (hash-randomized order). Run
-    the same input many times and confirm identical output every time."""
-    md = (
-        "Analyst: this is a **Buy** opportunity.\n"
-        "Risk debater: counters with **Sell** in volatile regime.\n"
-        "Final synthesis: **Overweight** with caveats.\n"
+def test_run_one_deep_threads_decision_md_from_final_state(
+    fake_graph, universe_loader, tmp_path,
+):
+    """decision_md must come from final_state['final_trade_decision'],
+    not from the second return value (which is just the rating word).
+    The compare flow's LLM summariser depends on the markdown body."""
+    pm_markdown = "## PM decision\n\n**Rating**: Buy\n\nLong thesis details."
+    fake_graph.propagate.return_value = (
+        {"final_trade_decision": pm_markdown},
+        "Buy",
     )
-    results = {_extract_rating(md) for _ in range(500)}
-    assert results == {"Overweight"}, f"non-deterministic: {results}"
-
-
-@pytest.mark.unit
-def test_extract_rating_canonical_wins_over_mid_doc_tokens():
-    """Canonical FINAL TRANSACTION marker beats any other token in the doc."""
-    md = (
-        "**Buy** in the early thesis section.\n"
-        "Reconsidered after risk debate.\n"
-        "FINAL TRANSACTION PROPOSAL: **Sell**\n"
-        "Trailing notes mention **Hold** once more.\n"
-    )
-    # Canonical marker captures Sell despite Hold appearing afterwards.
-    assert _extract_rating(md) == "Sell"
-
-
-@pytest.mark.unit
-def test_extract_rating_tolerates_whitespace_inside_bold_tokens():
-    md = "Final view: **  Overweight  ** with monitoring."
-    assert _extract_rating(md) == "Overweight"
+    # Build a Task that flows through compare so we can read decision_md
+    # via the captured RunResult. Easier: stub _run_one_deep's return.
+    from tradingagents.agent_assist.orchestrator import _run_one_deep
+    result = _run_one_deep("NVDA", today="2026-05-11")
+    assert result.rating == "Buy"
+    assert result.decision_md == pm_markdown
 
 
 # ---------------------------------------------------------------------------

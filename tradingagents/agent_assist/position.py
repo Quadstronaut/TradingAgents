@@ -2,6 +2,11 @@
 
 Returns a sentence the orchestrator threads into the Portfolio Manager
 prompt via TradingAgentsGraph.propagate(..., additional_portfolio_context=...).
+
+The rendered string matches the format produced by ``_run_owned`` in the
+orchestrator, so the LLM sees a single canonical position-context shape
+regardless of whether the position came from the menu or was inferred
+from a freeform prompt.
 """
 
 from __future__ import annotations
@@ -9,22 +14,47 @@ from __future__ import annotations
 from typing import Optional
 
 
+def _ask_non_negative_float(prompt: str) -> Optional[float]:
+    """Prompt for a non-negative number; Enter returns None; reprompts on
+    invalid or negative input.
+
+    Strips a leading ``$`` so users can paste things like ``$127.45``.
+    """
+    while True:
+        raw = input(prompt).strip().lstrip("$").strip()
+        if not raw:
+            return None
+        try:
+            value = float(raw)
+        except ValueError:
+            print(f"  '{raw}' is not a number.")
+            continue
+        if value < 0:
+            print("  Must be zero or positive.")
+            continue
+        return value
+
+
 def ask_position(ticker: str) -> Optional[str]:
     """Ask the user for share count and cost basis for ``ticker``.
 
-    Returns a formatted sentence, or None if the user skips either field.
+    Returns a formatted sentence matching ``_run_owned``'s template, or
+    None if the user skips either field (Enter on an empty prompt).
+    Reprompts on non-numeric or negative input.
     """
-    raw_count = input(
-        f"Do you currently hold {ticker}? "
-        f"How many shares (Enter to skip)? "
-    ).strip()
-    if not raw_count:
+    shares = _ask_non_negative_float(
+        f"Do you currently hold {ticker}? How many shares (Enter to skip)? "
+    )
+    if shares is None:
         return None
 
-    raw_basis = input(
-        f"Cost basis per share in USD (Enter to skip)? $"
-    ).strip().lstrip("$")
-    if not raw_basis:
+    basis = _ask_non_negative_float(
+        "Cost basis per share in USD (Enter to skip)? $"
+    )
+    if basis is None:
         return None
 
-    return f"User currently holds {raw_count} shares of {ticker} at ${raw_basis} cost basis."
+    return (
+        f"User currently holds {shares:g} shares of {ticker} "
+        f"at ${basis:.2f} cost basis."
+    )

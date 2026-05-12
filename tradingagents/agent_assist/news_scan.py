@@ -8,10 +8,11 @@ rating — output is explicitly framed as "a read, not a recommendation".
 
 from __future__ import annotations
 
+import contextlib
 import datetime
 import logging
 from pathlib import Path
-from typing import Literal
+from typing import Iterator, Literal
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode
@@ -41,7 +42,7 @@ from tradingagents.agent_assist.progress import (
     news_scan_phases,
     progress_display,
 )
-from tradingagents.dataflows.config import set_config
+from tradingagents.dataflows.config import get_config, set_config
 from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.graph.conditional_logic import ConditionalLogic
 from tradingagents.graph.propagation import Propagator
@@ -145,13 +146,6 @@ def _build_graph(quick_llm, deep_llm):
 
 
 def _build_llms():
-    cfg = DEFAULT_CONFIG.copy()
-    cfg["llm_provider"] = ANALYSIS_PROVIDER
-    cfg["backend_url"] = ANALYSIS_BASE_URL
-    cfg["deep_think_llm"] = ANALYSIS_DEEP_MODEL
-    cfg["quick_think_llm"] = ANALYSIS_QUICK_MODEL
-    set_config(cfg)
-
     quick = create_llm_client(
         provider=ANALYSIS_PROVIDER,
         model=ANALYSIS_QUICK_MODEL,
@@ -165,11 +159,46 @@ def _build_llms():
     return quick, deep
 
 
+def _build_dataflow_config() -> dict:
+    """Compose the dataflow config that analyst tools (get_news, get_reddit_sentiment,
+    etc.) need to read during ``graph.stream``.
+
+    All keys touched here are already in DEFAULT_CONFIG, so set_config's merge
+    semantics are sufficient and the snapshot/restore in
+    :func:`_scoped_dataflow_config` is a complete round-trip.
+    """
+    cfg = DEFAULT_CONFIG.copy()
+    cfg["llm_provider"] = ANALYSIS_PROVIDER
+    cfg["backend_url"] = ANALYSIS_BASE_URL
+    cfg["deep_think_llm"] = ANALYSIS_DEEP_MODEL
+    cfg["quick_think_llm"] = ANALYSIS_QUICK_MODEL
+    return cfg
+
+
+@contextlib.contextmanager
+def _scoped_dataflow_config(cfg: dict) -> Iterator[None]:
+    """Temporarily install ``cfg`` as the dataflow global config.
+
+    The analyst tools read vendor routing and provider info from
+    ``tradingagents.dataflows.config``'s module-level state. news_scan is a
+    function-scoped flow — restoring the prior state on exit avoids leaking
+    these settings into subsequent tasks in the same process (the menu
+    loop runs tasks back-to-back without re-initialising the process).
+    """
+    prior = get_config()
+    try:
+        set_config(cfg)
+        yield
+    finally:
+        set_config(prior)
+
+
 def run_news_scan(ticker: str, *, output_dir: Path) -> int:
     """Execute the news-scan flow with live progress; write a summary."""
     today = datetime.date.today().isoformat()
     quick, deep = _build_llms()
     graph = _build_graph(quick, deep)
+    cfg = _build_dataflow_config()
 
     state = ProgressState(
         ticker=ticker,
@@ -185,7 +214,7 @@ def run_news_scan(ticker: str, *, output_dir: Path) -> int:
 
     final_state: dict = {}
     try:
-        with progress_display(state) as ps:
+        with _scoped_dataflow_config(cfg), progress_display(state) as ps:
             for mode, payload in graph.stream(init_state, **args):
                 if mode == "values":
                     final_state = payload

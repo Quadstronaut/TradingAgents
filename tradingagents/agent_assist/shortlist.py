@@ -84,6 +84,65 @@ def _price(ticker: str) -> Optional[float]:
         return None
 
 
+def _business_days_between(start: _dt.date, end: _dt.date) -> int:
+    """Count weekdays from ``start`` (exclusive) to ``end`` (inclusive).
+
+    Approximates trading days — doesn't account for market holidays, but the
+    error is at most a few days a year and the threshold consumer
+    (earnings-blackout check) is tolerant of that imprecision.
+    """
+    if end <= start:
+        return 0
+    days = 0
+    current = start
+    while current < end:
+        current += _dt.timedelta(days=1)
+        if current.weekday() < 5:
+            days += 1
+    return days
+
+
+def trading_days_until_earnings(
+    ticker: str, today: Optional[_dt.date] = None,
+) -> Optional[int]:
+    """Trading days until ``ticker``'s next reported earnings date.
+
+    Returns:
+        Non-negative int if an upcoming earnings date is known (0 = today,
+        1 = next trading day, etc.). ``None`` if yfinance reports no future
+        earnings date or the lookup fails — callers treat None as "unknown,
+        don't show a warning".
+
+    Sources: NBER 2007 working paper #13090 (Earnings Announcement Premium);
+    practitioner norm of ±3-5 day blackout around earnings.
+    """
+    today = today or _dt.date.today()
+    try:
+        import yfinance as yf
+        df = yf.Ticker(ticker).get_earnings_dates(limit=4)
+    except Exception as exc:
+        logger.warning("yfinance earnings lookup failed for %s: %s", ticker, exc)
+        return None
+
+    if df is None or len(df) == 0:
+        return None
+    try:
+        today_ts = pd.Timestamp(today)
+        index = df.index
+        # yfinance returns tz-aware timestamps; normalise to naive for comparison
+        if getattr(index, "tz", None) is not None:
+            index = index.tz_localize(None)
+        future_dates = [d.date() for d in index if d.date() >= today]
+    except Exception as exc:
+        logger.warning("earnings index parse failed for %s: %s", ticker, exc)
+        return None
+
+    if not future_dates:
+        return None
+    next_date = min(future_dates)
+    return _business_days_between(today, next_date)
+
+
 def _today_iso(today: Optional[_dt.date] = None) -> str:
     return (today or _dt.date.today()).isoformat()
 

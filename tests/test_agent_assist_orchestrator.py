@@ -8,6 +8,7 @@ import pytest
 
 from tradingagents.agent_assist.menu import Task
 from tradingagents.agent_assist.orchestrator import (
+    _maybe_print_earnings_warning,
     _run_budget,
     _theme_filter,
     main,
@@ -21,6 +22,18 @@ UNIVERSE_DF = pd.DataFrame([
     {"ticker": "AMD", "name": "Advanced Micro Devices", "sector": "Tech", "industry": "Semis"},
     {"ticker": "INTC", "name": "Intel", "sector": "Tech", "industry": "Semis"},
 ])
+
+
+@pytest.fixture(autouse=True)
+def _stub_earnings_lookup():
+    """Default: orchestrator tests don't hit yfinance for the earnings check.
+    Tests that care about the warning override this with their own patch
+    using the same target path."""
+    with patch(
+        "tradingagents.agent_assist.orchestrator.trading_days_until_earnings",
+        return_value=None,
+    ):
+        yield
 
 
 @pytest.fixture
@@ -439,7 +452,12 @@ def test_multi_ticker_freeform_recomputes_today_per_ticker(
 
     with patch(
         "tradingagents.agent_assist.orchestrator.datetime.date"
-    ) as mock_date:
+    ) as mock_date, patch(
+        # The date mock leaks to shortlist (same datetime module ref); stub
+        # the earnings helper to None so it doesn't try pd.Timestamp(MagicMock).
+        "tradingagents.agent_assist.orchestrator.trading_days_until_earnings",
+        return_value=None,
+    ):
         mock_date.today.side_effect = [fake_today_1, fake_today_2]
         with patch("builtins.input", side_effect=["y"]):
             rc = main(
@@ -535,6 +553,80 @@ def test_run_task_normalises_both_compare_tickers(
     # Two propagate calls, both with normalised tickers
     call_tickers = [c.args[0] for c in fake_graph.propagate.call_args_list]
     assert call_tickers == ["BRK-B", "BF-B"]
+
+
+# ---------------------------------------------------------------------------
+# _maybe_print_earnings_warning: blackout heads-up
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_earnings_warning_prints_when_within_blackout(capsys):
+    """0-5 trading days → warning. The user can still proceed; the warning
+    is informational since the run/no-run decision is contextual."""
+    with patch(
+        "tradingagents.agent_assist.orchestrator.trading_days_until_earnings",
+        return_value=2,
+    ):
+        _maybe_print_earnings_warning("NVDA")
+    out = capsys.readouterr().out
+    assert "[earnings warning]" in out
+    assert "NVDA" in out
+    assert "2 trading day" in out
+
+
+@pytest.mark.unit
+def test_earnings_warning_silent_when_outside_blackout(capsys):
+    """6+ trading days → no warning. Within the next 2 weeks is interesting
+    context but not an imminent concern."""
+    with patch(
+        "tradingagents.agent_assist.orchestrator.trading_days_until_earnings",
+        return_value=12,
+    ):
+        _maybe_print_earnings_warning("NVDA")
+    assert capsys.readouterr().out == ""
+
+
+@pytest.mark.unit
+def test_earnings_warning_silent_when_unknown(capsys):
+    """yfinance returned None (no future date or lookup failed) → no warning,
+    no scary 'unknown earnings' message. Silent is correct."""
+    with patch(
+        "tradingagents.agent_assist.orchestrator.trading_days_until_earnings",
+        return_value=None,
+    ):
+        _maybe_print_earnings_warning("UNKN")
+    assert capsys.readouterr().out == ""
+
+
+@pytest.mark.unit
+def test_earnings_warning_today_uses_today_phrasing(capsys):
+    """Earnings literally today → 'today' wording, not '0 trading day(s)'."""
+    with patch(
+        "tradingagents.agent_assist.orchestrator.trading_days_until_earnings",
+        return_value=0,
+    ):
+        _maybe_print_earnings_warning("NVDA")
+    out = capsys.readouterr().out
+    assert "today" in out
+    assert "0 trading day" not in out
+
+
+@pytest.mark.unit
+def test_specific_intent_calls_earnings_warning(
+    fake_graph, universe_loader, tmp_path, capsys,
+):
+    """The single-ticker entry points must invoke the warning before deep
+    analysis kicks off — _confirm_run isn't on this code path."""
+    with patch(
+        "tradingagents.agent_assist.orchestrator.trading_days_until_earnings",
+        return_value=3,
+    ):
+        rc = main(prompt="should I buy NVDA", budget=None, output_dir=tmp_path)
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "[earnings warning]" in out
+    assert "NVDA" in out
 
 
 # ---------------------------------------------------------------------------

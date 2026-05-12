@@ -11,10 +11,12 @@ from tradingagents.agent_assist.shortlist import (
     Candidate,
     ShortList,
     _CACHE_RETENTION_DAYS,
+    _business_days_between,
     _format_universe,
     _purge_stale_price_caches,
     bulk_price,
     shortlist,
+    trading_days_until_earnings,
 )
 
 
@@ -466,6 +468,80 @@ def test_format_universe_nan_safe_with_prices():
     out = _format_universe(df, prices={"ARM": 120.0, "AMD": 142.0})
     assert "ARM | Arm Holdings | — | $120.00" in out
     assert "AMD | Advanced Micro Devices | Tech | $142.00" in out
+
+
+# ---------------------------------------------------------------------------
+# Earnings-blackout helper
+# ---------------------------------------------------------------------------
+
+
+def _earnings_df(*iso_dates: str) -> pd.DataFrame:
+    """Build a yfinance-shaped earnings_dates frame indexed on the given dates."""
+    idx = pd.DatetimeIndex([pd.Timestamp(d) for d in iso_dates], name="Earnings Date")
+    return pd.DataFrame(index=idx, data={"EPS Estimate": [None] * len(iso_dates)})
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("start,end,expected", [
+    (_dt.date(2026, 5, 11), _dt.date(2026, 5, 11), 0),    # same day
+    (_dt.date(2026, 5, 11), _dt.date(2026, 5, 12), 1),    # Mon → Tue
+    (_dt.date(2026, 5, 11), _dt.date(2026, 5, 15), 4),    # Mon → Fri
+    (_dt.date(2026, 5, 11), _dt.date(2026, 5, 18), 5),    # Mon → next Mon (skips weekend)
+    (_dt.date(2026, 5, 15), _dt.date(2026, 5, 18), 1),    # Fri → Mon (skips Sat+Sun)
+    (_dt.date(2026, 5, 15), _dt.date(2026, 5, 14), 0),    # end before start → 0
+])
+def test_business_days_between(start, end, expected):
+    assert _business_days_between(start, end) == expected
+
+
+@pytest.mark.unit
+def test_trading_days_until_earnings_returns_none_when_no_future_date(tmp_path):
+    """If yfinance returns only past dates, the helper signals 'unknown'."""
+    today = _dt.date(2026, 5, 11)
+    past_only = _earnings_df("2026-04-15", "2026-01-20")
+
+    fake_ticker = MagicMock()
+    fake_ticker.get_earnings_dates.return_value = past_only
+    with patch("yfinance.Ticker", return_value=fake_ticker):
+        assert trading_days_until_earnings("NVDA", today=today) is None
+
+
+@pytest.mark.unit
+def test_trading_days_until_earnings_returns_none_on_empty_frame():
+    fake_ticker = MagicMock()
+    fake_ticker.get_earnings_dates.return_value = pd.DataFrame()
+    with patch("yfinance.Ticker", return_value=fake_ticker):
+        assert trading_days_until_earnings("NVDA") is None
+
+
+@pytest.mark.unit
+def test_trading_days_until_earnings_returns_none_on_yfinance_failure():
+    """Any exception inside the lookup must degrade to None, not crash."""
+    with patch("yfinance.Ticker", side_effect=RuntimeError("network")):
+        assert trading_days_until_earnings("NVDA") is None
+
+
+@pytest.mark.unit
+def test_trading_days_until_earnings_picks_nearest_future_date():
+    today = _dt.date(2026, 5, 11)  # a Monday
+    df = _earnings_df("2026-04-15", "2026-05-18", "2026-08-15")  # past, ~1wk, far
+
+    fake_ticker = MagicMock()
+    fake_ticker.get_earnings_dates.return_value = df
+    with patch("yfinance.Ticker", return_value=fake_ticker):
+        # Mon May 11 → Mon May 18 = 5 trading days (Tue/Wed/Thu/Fri/Mon)
+        assert trading_days_until_earnings("NVDA", today=today) == 5
+
+
+@pytest.mark.unit
+def test_trading_days_until_earnings_today_is_zero():
+    """Earnings literally today → 0 trading days. Caller treats 0-5 as blackout."""
+    today = _dt.date(2026, 5, 11)
+    df = _earnings_df("2026-05-11")
+    fake_ticker = MagicMock()
+    fake_ticker.get_earnings_dates.return_value = df
+    with patch("yfinance.Ticker", return_value=fake_ticker):
+        assert trading_days_until_earnings("NVDA", today=today) == 0
 
 
 @pytest.mark.unit

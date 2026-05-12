@@ -43,6 +43,7 @@ from tradingagents.agent_assist.shortlist import (
     PricedCandidate,
     bulk_price,
     shortlist,
+    trading_days_until_earnings,
 )
 from tradingagents.agent_assist.summarize import RunResult, write_summary
 from tradingagents.default_config import DEFAULT_CONFIG
@@ -62,8 +63,33 @@ def load_universe() -> pd.DataFrame:
         return pd.read_csv(f)
 
 
+_EARNINGS_BLACKOUT_DAYS = 5
+
+
+def _maybe_print_earnings_warning(ticker: str, today: Optional[datetime.date] = None) -> None:
+    """Surface an earnings-imminent warning before a deep run starts.
+
+    Earnings releases create 5-10% daily moves and an Earnings Announcement
+    Premium (NBER w13090); a 15-minute analysis kicked off ≤5 trading days
+    before earnings is likely to be invalidated by tomorrow's release.
+    Practitioner convention is a ±3-5 day blackout. We don't block — the
+    decision is contextual (some users analyze *because* of earnings) — but
+    the user should know before committing the wall-clock cost.
+    """
+    days = trading_days_until_earnings(ticker, today=today)
+    if days is None:
+        return
+    if 0 <= days <= _EARNINGS_BLACKOUT_DAYS:
+        when = "today" if days == 0 else f"in ~{days} trading day(s)"
+        print(
+            f"[earnings warning] {ticker} reports {when}. Deep analysis may "
+            f"be invalidated by the release."
+        )
+
+
 def _confirm_run(ticker: str) -> str:
     """Returns 'y', 's', or 'a'."""
+    _maybe_print_earnings_warning(ticker)
     while True:
         raw = input(f"Run deep analysis on {ticker} (~15 min)? [y]es / [s]kip / [a]bort: ").strip().lower()
         if raw in ("y", "yes"):
@@ -235,6 +261,7 @@ def _print_summary_tail(summary_path: Path, results: list[RunResult]) -> None:
 
 def _run_specific(task: Task, *, output_dir: Path) -> int:
     today = datetime.date.today().isoformat()
+    _maybe_print_earnings_warning(task.ticker)
     result = _run_one_deep(task.ticker, today=today)
     summary_path = write_summary(
         prompt=f"specific: {task.ticker}",
@@ -257,6 +284,7 @@ def _run_owned(task: Task, *, output_dir: Path) -> int:
         f"at ${task.cost_basis:.2f} cost basis."
     )
     print(f"[position] {pos}")
+    _maybe_print_earnings_warning(task.ticker)
     result = _run_one_deep(task.ticker, today=today, position_str=pos)
     summary_path = write_summary(
         prompt=f"owned: {task.ticker} ({task.shares:g}sh @ ${task.cost_basis:.2f})",
@@ -393,6 +421,8 @@ def _run_budget(task: Task, *, output_dir: Path, universe_df: pd.DataFrame) -> i
 
 def _run_compare(task: Task, *, output_dir: Path) -> int:
     from tradingagents.agent_assist.compare import run_compare
+    _maybe_print_earnings_warning(task.ticker)
+    _maybe_print_earnings_warning(task.ticker_b)
     return run_compare(
         task.ticker, task.ticker_b, output_dir=output_dir,
         deep_runner=_run_one_deep, summary_writer=write_summary,
@@ -418,6 +448,7 @@ def _run_freeform(task: Task, *, output_dir: Path, universe_df: pd.DataFrame) ->
             if pos:
                 print(f"[position] {pos}")
         today = datetime.date.today().isoformat()
+        _maybe_print_earnings_warning(parsed.tickers[0])
         result = _run_one_deep(parsed.tickers[0], today=today, position_str=pos)
         summary_path = write_summary(
             prompt=task.prompt, results=[result], output_dir=output_dir,
@@ -437,10 +468,10 @@ def _run_freeform(task: Task, *, output_dir: Path, universe_df: pd.DataFrame) ->
             return 0
         # Recompute today per ticker so a multi-run spanning midnight stamps
         # each ticker with its actual start date.
-        results = [
-            _run_one_deep(t, today=datetime.date.today().isoformat())
-            for t in parsed.tickers
-        ]
+        results = []
+        for t in parsed.tickers:
+            _maybe_print_earnings_warning(t)
+            results.append(_run_one_deep(t, today=datetime.date.today().isoformat()))
         summary_path = write_summary(
             prompt=task.prompt, results=results, output_dir=output_dir,
         )

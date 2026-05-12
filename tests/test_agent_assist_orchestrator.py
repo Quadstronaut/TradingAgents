@@ -1,6 +1,7 @@
 """Orchestrator wiring tests. Every external call (LLM, yfinance, propagate, input) is mocked."""
 
 from pathlib import Path
+from typing import Optional
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
@@ -10,6 +11,7 @@ from tradingagents.agent_assist.menu import Task
 from tradingagents.agent_assist.orchestrator import (
     _maybe_print_earnings_warning,
     _run_budget,
+    _sector_concentration_warning,
     _theme_filter,
     main,
     run_task,
@@ -557,6 +559,71 @@ def test_run_task_normalises_both_compare_tickers(
     # Two propagate calls, both with normalised tickers
     call_tickers = [c.args[0] for c in fake_graph.propagate.call_args_list]
     assert call_tickers == ["BRK-B", "BF-B"]
+
+
+# ---------------------------------------------------------------------------
+# _sector_concentration_warning: diversification heads-up
+# ---------------------------------------------------------------------------
+
+
+def _pc(ticker: str, sector: Optional[str], price: float = 100.0) -> PricedCandidate:
+    return PricedCandidate(ticker=ticker, reasoning="x", last_price=price, sector=sector)
+
+
+@pytest.mark.unit
+def test_sector_warning_none_for_single_candidate():
+    """A 1-name shortlist can't be 'concentrated' in any meaningful sense."""
+    assert _sector_concentration_warning([_pc("NVDA", "Tech")]) is None
+
+
+@pytest.mark.unit
+def test_sector_warning_fires_when_all_same():
+    """3 tech candidates → all-same warning that names the sector."""
+    cands = [_pc("NVDA", "Tech"), _pc("AMD", "Tech"), _pc("INTC", "Tech")]
+    out = _sector_concentration_warning(cands)
+    assert out is not None
+    assert "all 3 candidates are in Tech" in out
+
+
+@pytest.mark.unit
+def test_sector_warning_fires_when_majority_same():
+    """2 of 3 in same sector → softer warning (not 'all'). Counts the cluster."""
+    cands = [_pc("NVDA", "Tech"), _pc("AMD", "Tech"), _pc("PFE", "Health")]
+    out = _sector_concentration_warning(cands)
+    assert out is not None
+    assert "2 of 3 candidates are in Tech" in out
+    assert "all" not in out  # softer phrasing
+
+
+@pytest.mark.unit
+def test_sector_warning_silent_when_diversified():
+    """2 of 3 != majority (>= ceil(N/2)+1). Three distinct sectors → silent."""
+    cands = [_pc("NVDA", "Tech"), _pc("PFE", "Health"), _pc("XOM", "Energy")]
+    assert _sector_concentration_warning(cands) is None
+
+
+@pytest.mark.unit
+def test_sector_warning_handles_2_candidates_both_same():
+    """2 candidates same sector → all-N warning."""
+    cands = [_pc("NVDA", "Tech"), _pc("AMD", "Tech")]
+    out = _sector_concentration_warning(cands)
+    assert out is not None
+    assert "all 2 candidates are in Tech" in out
+
+
+@pytest.mark.unit
+def test_sector_warning_silent_when_2_different():
+    """2 different sectors with 1 each → no majority → silent."""
+    cands = [_pc("NVDA", "Tech"), _pc("PFE", "Health")]
+    assert _sector_concentration_warning(cands) is None
+
+
+@pytest.mark.unit
+def test_sector_warning_skips_when_sector_missing():
+    """If sector metadata is missing (e.g., shortlist via a universe without
+    a sector column), don't fabricate a warning."""
+    cands = [_pc("NVDA", None), _pc("AMD", None)]
+    assert _sector_concentration_warning(cands) is None
 
 
 # ---------------------------------------------------------------------------

@@ -62,6 +62,7 @@ class PricedCandidate:
     ticker: str
     reasoning: str
     last_price: float
+    sector: Optional[str] = None  # populated from universe row when available
 
 
 # ---------------------------------------------------------------------------
@@ -431,6 +432,16 @@ def _shortlist_round(
     result: ShortList = llm.invoke(prompt)
 
     universe_set = set(universe["ticker"].astype(str).tolist())
+    # Build a ticker→sector lookup so PricedCandidate can carry its sector
+    # to downstream consumers (concentration flagging, summary rendering).
+    sector_by_ticker: dict[str, Optional[str]] = {}
+    if "sector" in universe.columns:
+        for row in universe[["ticker", "sector"]].itertuples(index=False):
+            val = row.sector
+            sector_by_ticker[str(row.ticker)] = (
+                None if val is None or (isinstance(val, float) and pd.isna(val))
+                else str(val)
+            )
 
     kept: list[PricedCandidate] = []
     rejected: list[str] = []
@@ -454,6 +465,7 @@ def _shortlist_round(
             ticker=cand.ticker,
             reasoning=cand.reasoning,
             last_price=price,
+            sector=sector_by_ticker.get(cand.ticker),
         ))
     return kept, rejected
 

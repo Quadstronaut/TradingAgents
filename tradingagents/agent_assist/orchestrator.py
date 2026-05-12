@@ -16,6 +16,7 @@ from __future__ import annotations
 import dataclasses
 import datetime
 import logging
+from collections import Counter
 from importlib.resources import files
 from pathlib import Path
 from typing import Optional
@@ -189,12 +190,43 @@ def _run_one_deep(
 # ---------------------------------------------------------------------------
 
 
+def _sector_concentration_warning(candidates: list[PricedCandidate]) -> Optional[str]:
+    """Return a one-line warning when candidates cluster in a single sector.
+
+    Practitioner norm: portfolio-level max 30-50% single-sector exposure
+    (CFA Institute, AlphaAgents 2025 multi-agent portfolio paper). For a
+    2-3 ticker shortlist, flag when the majority share a sector — the user
+    asked for "tech" or "biotech" and got back a tightly clustered set,
+    which is informative to surface before they commit time to deep runs.
+    """
+    if len(candidates) < 2:
+        return None
+    sectors = [c.sector for c in candidates if c.sector]
+    if len(sectors) < 2:
+        return None
+    counter = Counter(sectors)
+    top_sector, top_count = counter.most_common(1)[0]
+    if top_count == len(candidates):
+        return (
+            f"[heads-up] all {len(candidates)} candidates are in {top_sector}. "
+            "Consider whether the prompt should be broadened for sector diversification."
+        )
+    if top_count >= 2 and top_count > len(candidates) / 2:
+        return (
+            f"[heads-up] {top_count} of {len(candidates)} candidates are in {top_sector}."
+        )
+    return None
+
+
 def _print_shortlist(candidates: list[PricedCandidate]) -> None:
     print()
     print(f"=== Shortlist ({len(candidates)} candidates) ===")
     for c in candidates:
         price_str = f" @ ${c.last_price:.2f}" if c.last_price else ""
         print(f"  - {c.ticker}{price_str} - {c.reasoning}")
+    warning = _sector_concentration_warning(candidates)
+    if warning:
+        print(warning)
     est_min = len(candidates) * 15
     print(f"Estimated time if you run all: ~{est_min} min.")
     print()

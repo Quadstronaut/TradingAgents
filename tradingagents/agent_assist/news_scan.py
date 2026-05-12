@@ -37,7 +37,6 @@ from tradingagents.agent_assist.config import (
     ANALYSIS_QUICK_MODEL,
 )
 from tradingagents.agent_assist.progress import (
-    Phase,
     ProgressState,
     news_scan_phases,
     progress_display,

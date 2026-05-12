@@ -11,7 +11,7 @@ parameters) so that variable-interpolation footguns like
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Callable, Literal, Optional
 
 from tradingagents.agent_assist.prompt_parse import normalize_ticker

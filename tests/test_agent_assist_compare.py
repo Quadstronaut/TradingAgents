@@ -133,6 +133,25 @@ def test_compare_writes_summary_even_on_partial_failure(tmp_path):
 
 
 @pytest.mark.unit
+def test_compare_rejects_path_traversal_ticker(tmp_path):
+    """A direct call (not via run_task) with a dangerous ticker must not
+    interpolate it into the output path. safe_ticker_component raises."""
+    summary_writer = MagicMock(return_value=tmp_path / "ranked.md")
+    runner = _runner_returning(_ok_result("AAPL"), _ok_result("MSFT"))
+    with patch(
+        "tradingagents.agent_assist.compare._summarize_comparison",
+        return_value=ComparisonVerdict(winner="A", reasoning="x"),
+    ):
+        with pytest.raises(ValueError, match="characters not allowed"):
+            run_compare(
+                "../etc/foo", "MSFT",
+                output_dir=tmp_path,
+                deep_runner=runner,
+                summary_writer=summary_writer,
+            )
+
+
+@pytest.mark.unit
 def test_compare_summariser_failure_still_returns_4_if_runs_failed(tmp_path):
     """If the comparison summariser raises, the function logs and
     continues with a 'tie' verdict. But if either deep run failed, the

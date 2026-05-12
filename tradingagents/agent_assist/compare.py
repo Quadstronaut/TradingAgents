@@ -21,6 +21,7 @@ from tradingagents.agent_assist.config import (
     ANALYSIS_QUICK_MODEL,
 )
 from tradingagents.agent_assist.summarize import RunResult
+from tradingagents.dataflows.utils import safe_ticker_component
 from tradingagents.llm_clients import create_llm_client
 
 logger = logging.getLogger(__name__)
@@ -111,7 +112,10 @@ def run_compare(
     output_dir = Path(output_dir).expanduser()
     output_dir.mkdir(parents=True, exist_ok=True)
     ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    out = output_dir / f"{ts}-compare-{ticker_a}-vs-{ticker_b}.md"
+    # Per CLAUDE.md: ticker components in paths must go through safe_ticker_component.
+    safe_a = safe_ticker_component(ticker_a)
+    safe_b = safe_ticker_component(ticker_b)
+    out = output_dir / f"{ts}-compare-{safe_a}-vs-{safe_b}.md"
 
     pick_line = (
         f"**Pick:** {winner_ticker}" if winner_ticker

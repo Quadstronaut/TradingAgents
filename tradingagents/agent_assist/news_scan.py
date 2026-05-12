@@ -43,6 +43,7 @@ from tradingagents.agent_assist.progress import (
     progress_display,
 )
 from tradingagents.dataflows.config import get_config, set_config
+from tradingagents.dataflows.utils import safe_ticker_component
 from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.graph.conditional_logic import ConditionalLogic
 from tradingagents.graph.propagation import Propagator
@@ -255,7 +256,10 @@ def run_news_scan(ticker: str, *, output_dir: Path) -> int:
     output_dir = Path(output_dir).expanduser()
     output_dir.mkdir(parents=True, exist_ok=True)
     ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    out = output_dir / f"{ts}-news-scan-{ticker}.md"
+    # Per CLAUDE.md path-safety rule: anything user/LLM-influenced that ends
+    # up in a filesystem path must round-trip through safe_ticker_component.
+    safe = safe_ticker_component(ticker)
+    out = output_dir / f"{ts}-news-scan-{safe}.md"
     body = "\n".join([
         f"# News scan — {ticker} — {ts}",
         "",

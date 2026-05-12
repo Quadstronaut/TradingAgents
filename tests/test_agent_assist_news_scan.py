@@ -250,3 +250,17 @@ def test_run_news_scan_dataflow_config_restored_after_failure(
     rc = run_news_scan("INTC", output_dir=tmp_path)
     assert rc == 4
     assert get_config()["llm_provider"] == initial["llm_provider"]
+
+
+@pytest.mark.unit
+def test_run_news_scan_rejects_path_traversal_ticker(
+    _patch_news_scan_internals, tmp_path,
+):
+    """A malicious ticker that bypasses normalize_ticker (e.g. a direct
+    call from a script with '..' or a slash) must not be interpolated
+    into the output filename. safe_ticker_component raises ValueError."""
+    _patch_news_scan_internals["graph"].stream.return_value = iter([])
+    with pytest.raises(ValueError, match="characters not allowed"):
+        run_news_scan("../etc/passwd", output_dir=tmp_path)
+    # No file created in tmp_path or above it
+    assert not list(tmp_path.glob("*"))

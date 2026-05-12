@@ -92,6 +92,20 @@ def _confirm_run(ticker: str) -> str:
         print("Please answer y, s, or a.")
 
 
+def _confirm_bulk(n: int) -> bool:
+    """Single-prompt confirm before kicking off N back-to-back deep runs.
+
+    Used by multi-ticker freeform paths where the user already named the
+    tickers — per-ticker confirm would be noise; one gate is enough."""
+    while True:
+        raw = input(f"Run all {n}? [y/N]: ").strip().lower()
+        if raw in ("y", "yes"):
+            return True
+        if raw in ("", "n", "no"):
+            return False
+        print("Please answer y or n.")
+
+
 def _extract_rating(decision_md: str) -> str:
     """Pull the final rating out of the Portfolio Manager's rendered markdown.
 
@@ -436,6 +450,15 @@ def _run_freeform(task: Task, *, output_dir: Path, universe_df: pd.DataFrame) ->
         return 0 if result.rating != "FAILED" else 4
 
     if parsed.intent == "multi":
+        n = len(parsed.tickers)
+        est_min = n * 15
+        print(
+            f"Found {n} tickers: {', '.join(parsed.tickers)}. "
+            f"Estimated time: ~{est_min} min."
+        )
+        if not _confirm_bulk(n):
+            print("Aborted.")
+            return 0
         today = datetime.date.today().isoformat()
         results = [_run_one_deep(t, today=today) for t in parsed.tickers]
         summary_path = write_summary(

@@ -319,6 +319,103 @@ def test_run_budget_theme_soft_fallback_when_hard_match_too_sparse(tmp_path, cap
 
 
 # ---------------------------------------------------------------------------
+# Multi-ticker freeform: bulk confirm gates N×15-min deep runs
+# ---------------------------------------------------------------------------
+
+
+# Universe used for multi-ticker freeform tests (includes more tickers so
+# multiple matches are possible).
+MULTI_UNIVERSE_DF = pd.DataFrame([
+    {"ticker": "NVDA", "name": "NVIDIA", "sector": "Tech", "industry": "Semis"},
+    {"ticker": "AMD", "name": "Advanced Micro Devices", "sector": "Tech", "industry": "Semis"},
+    {"ticker": "INTC", "name": "Intel", "sector": "Tech", "industry": "Semis"},
+])
+
+
+@pytest.fixture
+def multi_universe_loader():
+    with patch(
+        "tradingagents.agent_assist.orchestrator.load_universe",
+        return_value=MULTI_UNIVERSE_DF,
+    ):
+        yield
+
+
+@pytest.mark.unit
+def test_multi_ticker_freeform_runs_all_after_bulk_confirm_y(
+    fake_graph, multi_universe_loader, tmp_path,
+):
+    """User says 'compare AMD vs INTC vs NVDA', accepts the bulk-confirm
+    prompt → all three deep runs fire."""
+    inputs = ["y"]  # bulk confirm
+    with patch("builtins.input", side_effect=inputs):
+        rc = main(
+            prompt="compare AMD vs INTC vs NVDA",
+            budget=None,
+            output_dir=tmp_path,
+        )
+
+    assert rc == 0
+    assert fake_graph.propagate.call_count == 3
+    called_tickers = sorted(c.args[0] for c in fake_graph.propagate.call_args_list)
+    assert called_tickers == ["AMD", "INTC", "NVDA"]
+
+
+@pytest.mark.unit
+def test_multi_ticker_freeform_aborts_cleanly_on_bulk_confirm_n(
+    fake_graph, multi_universe_loader, tmp_path, capsys,
+):
+    """Declining the bulk confirm must short-circuit — no propagate calls."""
+    inputs = ["n"]
+    with patch("builtins.input", side_effect=inputs):
+        rc = main(
+            prompt="compare AMD vs INTC",
+            budget=None,
+            output_dir=tmp_path,
+        )
+
+    assert rc == 0
+    fake_graph.propagate.assert_not_called()
+    out = capsys.readouterr().out
+    assert "Aborted" in out
+
+
+@pytest.mark.unit
+def test_multi_ticker_freeform_default_empty_input_is_no(
+    fake_graph, multi_universe_loader, tmp_path,
+):
+    """Pressing Enter (empty) defaults to no — bulk runs are expensive; the
+    safe default is don't kick them off."""
+    inputs = [""]  # Enter
+    with patch("builtins.input", side_effect=inputs):
+        rc = main(
+            prompt="compare AMD vs INTC",
+            budget=None,
+            output_dir=tmp_path,
+        )
+
+    assert rc == 0
+    fake_graph.propagate.assert_not_called()
+
+
+@pytest.mark.unit
+def test_multi_ticker_freeform_reprompts_on_invalid_then_accepts(
+    fake_graph, multi_universe_loader, tmp_path,
+):
+    """Bad input → reprompt, eventually accept."""
+    inputs = ["maybe", "y"]
+    with patch("builtins.input", side_effect=inputs):
+        rc = main(
+            prompt="compare AMD vs INTC",
+            budget=None,
+            output_dir=tmp_path,
+        )
+
+    assert rc == 0
+    assert fake_graph.propagate.call_count == 2
+
+
+# ---------------------------------------------------------------------------
 # run_task: normalises ticker / ticker_b at the boundary
 # ---------------------------------------------------------------------------
 

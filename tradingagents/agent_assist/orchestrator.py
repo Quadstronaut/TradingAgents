@@ -34,6 +34,7 @@ from tradingagents.agent_assist.progress import (
     full_pipeline_phases,
     progress_display,
 )
+from tradingagents.agent_assist.position import format_position_context
 from tradingagents.agent_assist.prompt_parse import (
     ParsedPrompt,
     normalize_ticker,
@@ -41,6 +42,7 @@ from tradingagents.agent_assist.prompt_parse import (
 )
 from tradingagents.agent_assist.shortlist import (
     PricedCandidate,
+    _price,
     bulk_price,
     shortlist,
     trading_days_until_earnings,
@@ -279,9 +281,12 @@ def _run_owned(task: Task, *, output_dir: Path) -> int:
             f"(got shares={task.shares!r}, cost_basis={task.cost_basis!r})"
         )
     today = datetime.date.today().isoformat()
-    pos = (
-        f"User currently holds {task.shares:g} shares of {task.ticker} "
-        f"at ${task.cost_basis:.2f} cost basis."
+    # Fetch current price so the LLM sees unrealized P&L and any
+    # behavioural-bias counter-prompt (>20% loss or >50% gain).
+    current_price = _price(task.ticker)
+    pos = format_position_context(
+        task.ticker, task.shares, task.cost_basis,
+        current_price=current_price,
     )
     print(f"[position] {pos}")
     _maybe_print_earnings_warning(task.ticker)
@@ -444,7 +449,9 @@ def _run_freeform(task: Task, *, output_dir: Path, universe_df: pd.DataFrame) ->
         from tradingagents.agent_assist.position import ask_position
         pos = ""
         if parsed.hold_intent:
-            pos = ask_position(parsed.tickers[0]) or ""
+            # Fetch current price so ask_position can include P&L context.
+            current = _price(parsed.tickers[0])
+            pos = ask_position(parsed.tickers[0], current_price=current) or ""
             if pos:
                 print(f"[position] {pos}")
         today = datetime.date.today().isoformat()

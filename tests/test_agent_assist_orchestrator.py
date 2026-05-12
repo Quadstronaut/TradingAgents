@@ -25,12 +25,16 @@ UNIVERSE_DF = pd.DataFrame([
 
 
 @pytest.fixture(autouse=True)
-def _stub_earnings_lookup():
-    """Default: orchestrator tests don't hit yfinance for the earnings check.
-    Tests that care about the warning override this with their own patch
-    using the same target path."""
+def _stub_yfinance_helpers():
+    """Default: orchestrator tests don't hit yfinance for ad-hoc lookups.
+    The earnings check and the per-ticker current-price fetch both come
+    from shortlist helpers imported into orchestrator's namespace. Tests
+    that care override these with their own patch."""
     with patch(
         "tradingagents.agent_assist.orchestrator.trading_days_until_earnings",
+        return_value=None,
+    ), patch(
+        "tradingagents.agent_assist.orchestrator._price",
         return_value=None,
     ):
         yield
@@ -610,6 +614,62 @@ def test_earnings_warning_today_uses_today_phrasing(capsys):
     out = capsys.readouterr().out
     assert "today" in out
     assert "0 trading day" not in out
+
+
+@pytest.mark.unit
+def test_run_owned_includes_pnl_in_position_context_when_price_known(
+    fake_graph, universe_loader, tmp_path,
+):
+    """The position context the LLM sees must include unrealized P&L when
+    the current price is known."""
+    task = Task(intent="owned", ticker="NVDA", shares=10, cost_basis=100.0)
+    with patch(
+        "tradingagents.agent_assist.orchestrator._price",
+        return_value=130.0,
+    ):
+        rc = run_task(task, output_dir=tmp_path)
+
+    assert rc == 0
+    _, kwargs = fake_graph.propagate.call_args
+    ctx = kwargs.get("additional_portfolio_context", "")
+    assert "$130.00" in ctx
+    assert "+30.0% vs cost" in ctx
+    # Below the loss-aversion threshold and not yet at the disposition cutoff
+    assert "loss-aversion" not in ctx.lower()
+    assert "disposition" not in ctx.lower()
+
+
+@pytest.mark.unit
+def test_run_owned_flags_loss_aversion_in_propagate_context(
+    fake_graph, universe_loader, tmp_path,
+):
+    """Position at >20% loss → loss-aversion counter-prompt in the
+    additional_portfolio_context the PM agent receives."""
+    task = Task(intent="owned", ticker="NVDA", shares=10, cost_basis=100.0)
+    with patch(
+        "tradingagents.agent_assist.orchestrator._price",
+        return_value=70.0,
+    ):
+        run_task(task, output_dir=tmp_path)
+
+    _, kwargs = fake_graph.propagate.call_args
+    ctx = kwargs.get("additional_portfolio_context", "")
+    assert "loss-aversion" in ctx.lower()
+
+
+@pytest.mark.unit
+def test_run_owned_falls_back_to_bare_context_when_price_unknown(
+    fake_graph, universe_loader, tmp_path,
+):
+    """yfinance unreachable → _price returns None → context omits P&L
+    rather than fabricating it. autouse fixture defaults _price to None."""
+    task = Task(intent="owned", ticker="NVDA", shares=50, cost_basis=130.0)
+    run_task(task, output_dir=tmp_path)
+
+    _, kwargs = fake_graph.propagate.call_args
+    ctx = kwargs.get("additional_portfolio_context", "")
+    assert "50 shares of NVDA" in ctx
+    assert "Current price" not in ctx
 
 
 @pytest.mark.unit

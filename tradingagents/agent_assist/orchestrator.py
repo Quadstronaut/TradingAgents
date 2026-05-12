@@ -35,7 +35,11 @@ from tradingagents.agent_assist.progress import (
     progress_display,
 )
 from tradingagents.agent_assist.prompt_parse import ParsedPrompt, parse_prompt
-from tradingagents.agent_assist.shortlist import PricedCandidate, shortlist
+from tradingagents.agent_assist.shortlist import (
+    PricedCandidate,
+    bulk_price,
+    shortlist,
+)
 from tradingagents.agent_assist.summarize import RunResult, write_summary
 from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.graph.trading_graph import TradingAgentsGraph
@@ -172,11 +176,16 @@ def _run_shortlist_flow(
     output_dir: Path,
     position_first_str: str = "",
     summary_prompt_label: Optional[str] = None,
+    precomputed_prices: Optional[dict[str, float]] = None,
+    empty_diagnostic: Optional[str] = None,
 ) -> int:
     """Shared multi-ticker flow: shortlist → confirm each → deep run → summary."""
-    candidates = shortlist(seed_prompt, universe_df, budget=budget)
+    candidates = shortlist(
+        seed_prompt, universe_df, budget=budget,
+        precomputed_prices=precomputed_prices,
+    )
     if not candidates:
-        print("No candidates to analyze. Try a more specific prompt.")
+        print(empty_diagnostic or "No candidates to analyze. Try a more specific prompt.")
         return 3
 
     _print_shortlist(candidates)
@@ -261,18 +270,115 @@ def _run_theme(task: Task, *, output_dir: Path, universe_df: pd.DataFrame) -> in
     )
 
 
+def _theme_filter(universe_df: pd.DataFrame, theme: str) -> pd.DataFrame:
+    """Case-insensitive substring match across sector, industry, name, ticker."""
+    t = theme.strip().lower()
+    if not t:
+        return universe_df
+    cols = [c for c in ("sector", "industry", "name", "ticker") if c in universe_df.columns]
+    mask = pd.Series(False, index=universe_df.index)
+    for c in cols:
+        mask = mask | universe_df[c].fillna("").astype(str).str.lower().str.contains(t, regex=False)
+    return universe_df[mask]
+
+
+# Minimum sub-budget rows after the theme filter before we trust it; below
+# this we drop the theme filter and let the LLM soft-match on the wider set.
+_THEME_HARD_MIN = 5
+
+
 def _run_budget(task: Task, *, output_dir: Path, universe_df: pd.DataFrame) -> int:
-    seed_parts = [f"Best value picks at or below ${task.budget} per share this week"]
+    """Budget flow: pre-price + pre-filter universe so the LLM sees only affordables.
+
+    Steps:
+        1. Bulk-price the whole universe (day-cached).
+        2. Filter to ``price <= budget``.
+        3. If a theme was given, try hard substring matching across
+           sector/industry/name/ticker. If <``_THEME_HARD_MIN`` rows survive,
+           drop the theme filter and pass the wider set to the LLM (soft match).
+        4. If still <2 rows, print a specific diagnostic and exit cleanly.
+        5. Hand the filtered, priced subset to the shortlist stage.
+    """
+    print(f"[price] fetching current prices for {len(universe_df)} names...")
+    all_prices = bulk_price(universe_df["ticker"].astype(str).tolist())
+    if not all_prices:
+        print(
+            "Could not fetch prices (yfinance unreachable?). Falling back to "
+            "the LLM-only path — results may be off-budget."
+        )
+        seed_parts = [f"Best value picks at or below ${task.budget} per share this week"]
+        if task.theme:
+            seed_parts.append(f"focused on {task.theme}")
+        seed = ", ".join(seed_parts) + "."
+        return _run_shortlist_flow(
+            seed_prompt=seed,
+            budget=task.budget,
+            universe_df=universe_df,
+            output_dir=output_dir,
+            summary_prompt_label=f"budget: <=${task.budget}"
+            + (f" ({task.theme})" if task.theme else ""),
+        )
+
+    priced_df = universe_df[universe_df["ticker"].isin(all_prices.keys())].copy()
+    affordable_df = priced_df[
+        priced_df["ticker"].map(all_prices) <= task.budget
+    ].copy()
+
+    n_total = len(priced_df)
+    n_affordable = len(affordable_df)
+    print(f"[price] {n_affordable} of {n_total} names trade at or below ${task.budget}.")
+
+    if n_affordable < 2:
+        print(
+            f"Only {n_affordable} of {n_total} names trade at or below ${task.budget}. "
+            f"Try a higher cap (e.g. ${max(task.budget * 2, 50)})."
+        )
+        return 3
+
+    # Theme handling: hard filter, soft-fallback if too sparse.
+    used_filter = affordable_df
+    theme_note = ""
     if task.theme:
-        seed_parts.append(f"focused on {task.theme}")
+        hard = _theme_filter(affordable_df, task.theme)
+        if len(hard) >= _THEME_HARD_MIN:
+            used_filter = hard
+            theme_note = (
+                f"[theme] {len(hard)} names match '{task.theme}' "
+                f"(sector/industry/name substring)."
+            )
+        else:
+            theme_note = (
+                f"[theme] only {len(hard)} hard matches for '{task.theme}'; "
+                f"letting the LLM soft-match across all {n_affordable} affordables."
+            )
+        print(theme_note)
+
+    if len(used_filter) < 2:
+        print(
+            f"After theme filter only {len(used_filter)} affordable names remain. "
+            f"Try a different theme or drop it."
+        )
+        return 3
+
+    # Seed phrasing changes once the universe is pre-filtered: the LLM no
+    # longer has to think about price, just about fit.
+    seed_parts = [f"Best picks under ${task.budget}/share this week"]
+    if task.theme:
+        seed_parts.append(f"matching the theme '{task.theme}'")
     seed = ", ".join(seed_parts) + "."
+
+    label = f"budget: <=${task.budget}" + (f" ({task.theme})" if task.theme else "")
     return _run_shortlist_flow(
         seed_prompt=seed,
         budget=task.budget,
-        universe_df=universe_df,
+        universe_df=used_filter,
         output_dir=output_dir,
-        summary_prompt_label=f"budget: ≤${task.budget}"
-        + (f" ({task.theme})" if task.theme else ""),
+        summary_prompt_label=label,
+        precomputed_prices={t: all_prices[t] for t in used_filter["ticker"]},
+        empty_diagnostic=(
+            f"The LLM could not pick from the {len(used_filter)} sub-${task.budget} candidates. "
+            f"Try a different theme or a higher cap."
+        ),
     )
 
 

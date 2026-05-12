@@ -6,7 +6,12 @@ from unittest.mock import MagicMock, patch
 import pandas as pd
 import pytest
 
-from tradingagents.agent_assist.orchestrator import main
+from tradingagents.agent_assist.menu import Task
+from tradingagents.agent_assist.orchestrator import (
+    _run_budget,
+    _theme_filter,
+    main,
+)
 from tradingagents.agent_assist.shortlist import PricedCandidate
 
 
@@ -149,3 +154,188 @@ def test_explicit_budget_arg_skips_interactive_budget_prompt(
     assert rc == 0
     _, kwargs = m.call_args
     assert kwargs.get("budget") == 50
+
+
+# ---------------------------------------------------------------------------
+# _run_budget: pre-filter + theme handling
+# ---------------------------------------------------------------------------
+
+
+BUDGET_UNIVERSE = pd.DataFrame([
+    {"ticker": "F",    "name": "Ford",                 "sector": "Consumer Discretionary", "industry": "Automobiles"},
+    {"ticker": "BAC",  "name": "Bank of America",      "sector": "Financials",             "industry": "Diversified Banks"},
+    {"ticker": "INTC", "name": "Intel",                "sector": "Information Technology", "industry": "Semiconductors"},
+    {"ticker": "PFE",  "name": "Pfizer",               "sector": "Health Care",            "industry": "Pharmaceuticals"},
+    {"ticker": "ALNY", "name": "Alnylam Pharma",       "sector": "Health Care",            "industry": "Biotechnology"},
+    {"ticker": "NVDA", "name": "NVIDIA",               "sector": "Information Technology", "industry": "Semiconductors"},
+    {"ticker": "ASML", "name": "ASML Holding",         "sector": "Information Technology", "industry": "Semis Equipment"},
+])
+
+
+@pytest.mark.unit
+def test_theme_filter_substring_matches_across_columns():
+    out = _theme_filter(BUDGET_UNIVERSE, "biotech")
+    assert sorted(out["ticker"].tolist()) == ["ALNY"]
+
+    out = _theme_filter(BUDGET_UNIVERSE, "semi")
+    # NVDA/INTC/ASML all have "Semi" in industry, case-insensitively
+    assert sorted(out["ticker"].tolist()) == ["ASML", "INTC", "NVDA"]
+
+
+@pytest.mark.unit
+def test_run_budget_filters_universe_to_affordables_before_shortlist(tmp_path):
+    """LLM must only see sub-budget rows; shortlist must get precomputed_prices."""
+    prices = {
+        "F": 11.0, "BAC": 38.0, "INTC": 22.0, "PFE": 28.0,
+        "ALNY": 245.0, "NVDA": 920.0, "ASML": 980.0,
+    }
+
+    fake_picks = [
+        PricedCandidate(ticker="F", reasoning="cheap", last_price=11.0),
+        PricedCandidate(ticker="INTC", reasoning="value", last_price=22.0),
+    ]
+
+    with patch("tradingagents.agent_assist.orchestrator.bulk_price", return_value=prices), \
+         patch("tradingagents.agent_assist.orchestrator.shortlist",
+               return_value=fake_picks) as mock_shortlist, \
+         patch("tradingagents.agent_assist.orchestrator._run_one_deep") as run_deep, \
+         patch("builtins.input", side_effect=["s", "s"]):
+        run_deep.return_value = MagicMock(
+            ticker="X", rating="SKIPPED", log_path=None, error=None
+        )
+        rc = _run_budget(
+            Task(intent="budget", budget=25),
+            output_dir=tmp_path,
+            universe_df=BUDGET_UNIVERSE,
+        )
+
+    assert rc == 0
+    args, kwargs = mock_shortlist.call_args
+    sent_universe = args[1]
+    sent_tickers = sorted(sent_universe["ticker"].tolist())
+    # Only price <= 25 should be passed
+    assert sent_tickers == ["F", "INTC"]
+    sent_prices = kwargs["precomputed_prices"]
+    assert sent_prices == {"F": 11.0, "INTC": 22.0}
+
+
+@pytest.mark.unit
+def test_run_budget_emits_diagnostic_when_too_few_affordables(tmp_path, capsys):
+    """All names priced above budget → exit 3 with a specific message, no LLM call."""
+    prices = {"BAC": 38.0, "INTC": 22.0, "ALNY": 245.0, "NVDA": 920.0}
+
+    with patch("tradingagents.agent_assist.orchestrator.bulk_price", return_value=prices), \
+         patch("tradingagents.agent_assist.orchestrator.shortlist") as mock_shortlist:
+        rc = _run_budget(
+            Task(intent="budget", budget=10),
+            output_dir=tmp_path,
+            universe_df=BUDGET_UNIVERSE,
+        )
+
+    assert rc == 3
+    mock_shortlist.assert_not_called()
+    out = capsys.readouterr().out
+    assert "trade at or below $10" in out
+
+
+@pytest.mark.unit
+def test_run_budget_theme_hard_filter_used_when_enough_survivors(tmp_path):
+    """When >= _THEME_HARD_MIN names match the theme, the LLM should see the hard-filtered set."""
+    prices = {
+        "F": 11.0, "BAC": 38.0, "INTC": 22.0, "PFE": 28.0,
+        "ALNY": 245.0, "NVDA": 920.0, "ASML": 980.0,
+    }
+    # Bump budget so most rows survive, then verify the theme filter narrows the set
+    # being handed to shortlist. With _THEME_HARD_MIN=5 we need a wide theme.
+    # Use "Information Technology" which matches INTC, NVDA, ASML — only 3 affordable
+    # below $1000 means hard filter has <5 → should soft-fallback to all affordables.
+    # To force the hard-filter path we need at least 5 affordable rows matching the theme.
+    # Build a synthetic universe with 6 IT rows priced below 1000.
+    df = pd.DataFrame([
+        {"ticker": f"IT{i}", "name": f"InfoTech{i}", "sector": "Information Technology", "industry": "Software"}
+        for i in range(6)
+    ] + [
+        {"ticker": "OIL1", "name": "Oil Co", "sector": "Energy", "industry": "E&P"},
+    ])
+    p = {f"IT{i}": 10.0 + i for i in range(6)}
+    p["OIL1"] = 12.0
+
+    fake_picks = [
+        PricedCandidate(ticker="IT0", reasoning="a", last_price=10.0),
+        PricedCandidate(ticker="IT1", reasoning="b", last_price=11.0),
+    ]
+
+    with patch("tradingagents.agent_assist.orchestrator.bulk_price", return_value=p), \
+         patch("tradingagents.agent_assist.orchestrator.shortlist",
+               return_value=fake_picks) as mock_shortlist, \
+         patch("tradingagents.agent_assist.orchestrator._run_one_deep"), \
+         patch("builtins.input", side_effect=["s", "s"]):
+        rc = _run_budget(
+            Task(intent="budget", budget=100, theme="Information Technology"),
+            output_dir=tmp_path,
+            universe_df=df,
+        )
+
+    assert rc == 0
+    args, _ = mock_shortlist.call_args
+    sent_tickers = sorted(args[1]["ticker"].tolist())
+    # Hard filter kept the 6 IT rows, dropped OIL1
+    assert sent_tickers == [f"IT{i}" for i in range(6)]
+
+
+@pytest.mark.unit
+def test_run_budget_theme_soft_fallback_when_hard_match_too_sparse(tmp_path, capsys):
+    """When the theme yields < _THEME_HARD_MIN hard matches, LLM should see all affordables."""
+    prices = {
+        "F": 11.0, "BAC": 38.0, "INTC": 22.0, "PFE": 28.0,
+        "ALNY": 245.0, "NVDA": 920.0, "ASML": 980.0,
+    }
+    # "science" only matches via name/industry — likely zero hard matches in this universe.
+    fake_picks = [
+        PricedCandidate(ticker="PFE", reasoning="a", last_price=28.0),
+        PricedCandidate(ticker="INTC", reasoning="b", last_price=22.0),
+    ]
+    with patch("tradingagents.agent_assist.orchestrator.bulk_price", return_value=prices), \
+         patch("tradingagents.agent_assist.orchestrator.shortlist",
+               return_value=fake_picks) as mock_shortlist, \
+         patch("tradingagents.agent_assist.orchestrator._run_one_deep"), \
+         patch("builtins.input", side_effect=["s", "s"]):
+        rc = _run_budget(
+            Task(intent="budget", budget=30, theme="science"),
+            output_dir=tmp_path,
+            universe_df=BUDGET_UNIVERSE,
+        )
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "soft-match" in out
+    args, _ = mock_shortlist.call_args
+    sent = sorted(args[1]["ticker"].tolist())
+    # Soft fallback: all affordables (price <= 30) passed through regardless of theme.
+    # BAC ($38) is above budget so it's not in the affordable set.
+    assert sent == ["F", "INTC", "PFE"]
+
+
+@pytest.mark.unit
+def test_run_budget_falls_back_to_legacy_path_when_bulk_price_returns_empty(tmp_path):
+    """yfinance unreachable → no prices → must still try the LLM-only path, not exit 3."""
+    fake_picks = [
+        PricedCandidate(ticker="INTC", reasoning="a", last_price=22.0),
+        PricedCandidate(ticker="F", reasoning="b", last_price=11.0),
+    ]
+    with patch("tradingagents.agent_assist.orchestrator.bulk_price", return_value={}), \
+         patch("tradingagents.agent_assist.orchestrator.shortlist",
+               return_value=fake_picks) as mock_shortlist, \
+         patch("tradingagents.agent_assist.orchestrator._run_one_deep"), \
+         patch("builtins.input", side_effect=["s", "s"]):
+        rc = _run_budget(
+            Task(intent="budget", budget=25),
+            output_dir=tmp_path,
+            universe_df=BUDGET_UNIVERSE,
+        )
+
+    assert rc == 0
+    args, kwargs = mock_shortlist.call_args
+    # Legacy path: full universe, no precomputed_prices
+    assert "precomputed_prices" not in kwargs or kwargs.get("precomputed_prices") is None
+    assert sorted(args[1]["ticker"].tolist()) == sorted(BUDGET_UNIVERSE["ticker"].tolist())

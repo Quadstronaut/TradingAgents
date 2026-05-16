@@ -122,16 +122,20 @@ MODEL_OPTIONS: ProviderModeOptions = {
     "minimax": _MINIMAX_MODELS,
     "minimax-cn": _MINIMAX_MODELS,
     # OpenRouter: fetched dynamically. Azure: any deployed model name.
+    # Ollama: model IDs must match what `ollama list` reports on the box.
+    # Defaults here track what `ollama pull qwen3` and `ollama pull qwen3-coder:30b`
+    # produce — the canonical local-only setup. Other tags (gpt-oss, glm-4.7-flash)
+    # exist but are not pulled by default; add them back here only after pulling.
     "ollama": {
         "quick": [
-            ("Qwen3:latest (8B, local)", "qwen3:latest"),
-            ("GPT-OSS:latest (20B, local)", "gpt-oss:latest"),
-            ("GLM-4.7-Flash:latest (30B, local)", "glm-4.7-flash:latest"),
+            ("Qwen3 8B (local, fast)", "qwen3:8b"),
+            ("Qwen3 latest (alias of 8B)", "qwen3:latest"),
+            ("Qwen2.5-Coder 7B (local)", "qwen2.5-coder:7b"),
         ],
         "deep": [
-            ("GLM-4.7-Flash:latest (30B, local)", "glm-4.7-flash:latest"),
-            ("GPT-OSS:latest (20B, local)", "gpt-oss:latest"),
-            ("Qwen3:latest (8B, local)", "qwen3:latest"),
+            ("Qwen3-Coder 30B (local, recommended)", "qwen3-coder:30b"),
+            ("Qwen3 8B (local, faster but weaker)", "qwen3:8b"),
+            ("Qwen3 latest (alias of 8B)", "qwen3:latest"),
         ],
     },
 }

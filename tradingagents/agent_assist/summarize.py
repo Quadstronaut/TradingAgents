@@ -77,6 +77,14 @@ def write_summary(prompt: str, results: list[RunResult], output_dir: Path) -> Pa
         if r.log_path:
             lines.append("")
             lines.append(f"Log dir: `{r.log_path}`")
+        # Embed the full Portfolio Manager decision markdown so the summary
+        # file is self-contained — the user shouldn't have to crack open a
+        # 70 KB JSON to read the actual recommendation.
+        if r.decision_md:
+            lines.append("")
+            lines.append("#### Portfolio Manager decision")
+            lines.append("")
+            lines.append(r.decision_md.strip())
         lines.append("")
 
     out.write_text("\n".join(lines), encoding="utf-8")

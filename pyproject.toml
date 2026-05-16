@@ -49,6 +49,11 @@ markers = [
     "unit: fast isolated unit tests",
     "integration: tests requiring external services",
     "smoke: quick sanity-check tests",
+    "slow: tests that take >1 minute (typically real Ollama deep runs)",
+    "verify_robustness: end-to-end robustness check against live Ollama",
+    "verify_shape: structured-output shape + markdown contract check",
+    "verify_directional: historical backtest directional-sanity check",
+    "verify_contract: cloud-client wire-shape contract via recorded fixtures",
 ]
 filterwarnings = [
     "ignore::DeprecationWarning",

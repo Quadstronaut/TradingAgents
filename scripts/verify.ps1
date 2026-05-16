@@ -69,5 +69,8 @@ if ($Only) { $cmdArgs += @("--only", $Only) }
 if ($Quick) { $cmdArgs += @("--quick") }
 
 Write-Host "[verify] uv $($cmdArgs -join ' ')" -ForegroundColor Cyan
+# Run directly. If the user wants to tee, they can: `./verify.ps1 ... |
+# Tee-Object -FilePath x.txt -Encoding utf8` (default PS 5.1 encoding is
+# UTF-16 LE which downstream tools misread as mojibake).
 & uv @cmdArgs
 exit $LASTEXITCODE

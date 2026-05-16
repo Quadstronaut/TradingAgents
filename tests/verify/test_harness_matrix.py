@@ -27,6 +27,8 @@ def _green_pass(intent: str = "specific", pass_no: int = 0) -> PassResult:
             executive_summary_present=True,
             investment_thesis_present=True,
             pydantic_validated=True,
+            rating_word_in_md=True,
+            markdown_chars=400,
         )],
         elapsed_sec=0.1,
     )

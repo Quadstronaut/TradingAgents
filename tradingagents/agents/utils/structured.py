@@ -60,14 +60,24 @@ def invoke_structured_or_freetext(
     fallback sees the same input the structured call did.
     """
     if structured_llm is not None:
-        try:
-            result = structured_llm.invoke(prompt)
-            return render(result)
-        except Exception as exc:
-            logger.warning(
-                "%s: structured-output invocation failed (%s); retrying once as free text",
-                agent_name, exc,
-            )
+        # Two structured attempts before falling through. Empirically (Ollama
+        # qwen3-coder:30b verification matrix, 2026-05-16), single attempts
+        # fall back to free-text on roughly 1 deep run in 10. A second attempt
+        # usually succeeds because the failure is typically a transient JSON
+        # schema misalignment rather than a hard model limitation.
+        for attempt in (1, 2):
+            try:
+                result = structured_llm.invoke(prompt)
+                return render(result)
+            except Exception as exc:
+                logger.warning(
+                    "%s: structured-output attempt %d failed (%s)",
+                    agent_name, attempt, exc,
+                )
+        logger.warning(
+            "%s: both structured-output attempts failed; falling back to free text",
+            agent_name,
+        )
 
     response = plain_llm.invoke(prompt)
     return response.content

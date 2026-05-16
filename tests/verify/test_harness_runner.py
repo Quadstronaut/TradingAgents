@@ -65,6 +65,38 @@ class TestCheckShape:
         report = runner._check_shape(r)
         assert report.pydantic_validated is False
 
+    def test_free_text_fallback_accepted_when_content_is_substantial(self):
+        # Mimic the free-text fallback path: no headers, but the rating
+        # word appears and the markdown is non-trivial.
+        free_text = (
+            "Portfolio Manager's Final Decision: Hold. "
+            "After reviewing the risk debate, the team concluded that the "
+            "balance of bull and bear arguments is roughly even. Holding the "
+            "current position is appropriate while monitoring earnings and "
+            "macroeconomic indicators. The bull case rests on the company's "
+            "strong cash position; the bear case on debt and competitive risks."
+        )
+        r = RunResult("NVDA", "Hold", None, None, decision_md=free_text)
+        report = runner._check_shape(r)
+        assert report.structured_path_ok is False
+        assert report.fallback_path_ok is True
+        assert report.all_ok is True
+
+    def test_free_text_too_short_rejected(self):
+        # Same shape (no headers), but trivially short markdown — fail.
+        r = RunResult("NVDA", "Hold", None, None, decision_md="Hold.")
+        report = runner._check_shape(r)
+        assert report.fallback_path_ok is False
+        assert report.all_ok is False
+
+    def test_free_text_without_rating_word_rejected(self):
+        # Substantial markdown but rating word doesn't appear.
+        body = "x" * 500
+        r = RunResult("NVDA", "Hold", None, None, decision_md=body)
+        report = runner._check_shape(r)
+        assert report.fallback_path_ok is False
+        assert report.all_ok is False
+
 
 @pytest.mark.unit
 class TestBuildTask:
@@ -117,6 +149,8 @@ class TestPassResult:
             executive_summary_present=True,
             investment_thesis_present=True,
             pydantic_validated=True,
+            rating_word_in_md=True,
+            markdown_chars=400,
         )
 
     def test_robust_ok_requires_canonical(self):

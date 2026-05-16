@@ -49,15 +49,22 @@ CANONICAL_RATINGS: frozenset[str] = frozenset({
 class ShapeReport:
     """Per-deep-run structured-output shape inspection.
 
-    ``decision_md`` is the Portfolio Manager's rendered markdown only
-    (from ``final_state['final_trade_decision']``). The PM's render
-    contract — see ``render_pm_decision`` in
-    ``tradingagents/agents/schemas.py`` — produces **Rating**,
-    **Executive Summary**, and **Investment Thesis** (plus optional
-    Price Target / Time Horizon). It does NOT produce **Recommendation**
-    (that's the Research Manager) or FINAL TRANSACTION PROPOSAL (that's
-    the Trader). Those live in other ``final_state`` fields that
-    ``RunResult.decision_md`` does not carry today.
+    Two valid PM markdown shapes per the design:
+
+    1. **Structured path** — ``invoke_structured_or_freetext`` got a
+       valid Pydantic ``PortfolioDecision`` and ``render_pm_decision``
+       produced ``**Rating** / **Executive Summary** / **Investment
+       Thesis**`` headers.
+    2. **Free-text fallback** — both structured attempts failed; PM
+       output is raw model text without those headers, but
+       ``SignalProcessor`` still extracts the canonical rating word.
+       This path is intentional (``invoke_structured_or_freetext`` in
+       ``tradingagents/agents/utils/structured.py``).
+
+    ``all_ok`` accepts either path: the rating must be canonical, the
+    markdown must be non-trivial and mention the rating word.
+    ``structured_path_ok`` is reported separately for telemetry so we
+    can track the structured/fallback ratio over time.
     """
 
     ticker: str
@@ -65,16 +72,32 @@ class ShapeReport:
     executive_summary_present: bool
     investment_thesis_present: bool
     pydantic_validated: bool
+    rating_word_in_md: bool = False
+    markdown_chars: int = 0
     notes: list[str] = field(default_factory=list)
 
     @property
-    def all_ok(self) -> bool:
+    def structured_path_ok(self) -> bool:
+        """All structured-path headers present. Telemetry-only."""
         return all([
             self.rating_header_present,
             self.executive_summary_present,
             self.investment_thesis_present,
             self.pydantic_validated,
         ])
+
+    @property
+    def fallback_path_ok(self) -> bool:
+        """The free-text fallback is acceptable: rating extracted, content non-trivial."""
+        return (
+            self.pydantic_validated  # rating is canonical
+            and self.rating_word_in_md
+            and self.markdown_chars >= 200
+        )
+
+    @property
+    def all_ok(self) -> bool:
+        return self.structured_path_ok or self.fallback_path_ok
 
 
 @dataclass
@@ -157,17 +180,24 @@ def _check_shape(result: RunResult) -> ShapeReport:
     notes: list[str] = []
     if not md:
         notes.append("empty decision_md")
-    # The fact that propagate() returned a canonical rating word means the
-    # underlying Pydantic instance validated and SignalProcessor extracted
-    # the rating successfully — short of refactoring SignalProcessor we
-    # treat a canonical rating as proxy evidence of Pydantic validation.
     pydantic_validated = result.rating in CANONICAL_RATINGS
+    # The free-text fallback often still emits the rating word somewhere
+    # (e.g. "Rating: Hold" without bold or "Final recommendation: Hold").
+    # SignalProcessor is the source of truth for the rating word; if it
+    # extracted a canonical word from this markdown, the word is in there
+    # somewhere — but a defensive check is cheap.
+    rating_word_in_md = (
+        bool(result.rating) and result.rating != "FAILED"
+        and result.rating.lower() in md.lower()
+    )
     return ShapeReport(
         ticker=result.ticker,
         rating_header_present="**Rating**:" in md,
         executive_summary_present="**Executive Summary**:" in md,
         investment_thesis_present="**Investment Thesis**:" in md,
         pydantic_validated=pydantic_validated,
+        rating_word_in_md=rating_word_in_md,
+        markdown_chars=len(md),
         notes=notes,
     )
 

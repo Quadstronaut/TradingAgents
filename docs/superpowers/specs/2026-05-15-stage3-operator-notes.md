@@ -18,7 +18,8 @@ what failed, what was fixed, and how long it took.
 |---|---|---|---|---|---|---|
 | 1 | 2026-05-15 23:28 | 0 | news_scan | yes | — | — |
 | 2 | 2026-05-15 23:33 | 0 | specific | NO | UnicodeEncodeError on cp1252 stdout during rich.Live teardown — destroyed a 25.5-min successful run | (a) force-UTF-8 stdout in matrix.py on win32, (b) capture RunResult inside ``with progress_display`` so a teardown exception preserves the rating. Regression test in tests/verify/test_orchestrator_teardown_resilience.py |
-| 3 | 2026-05-16 00:?? | 0 | specific (retry) | (running) | TBD | — |
+| 3 | 2026-05-16 00:01 | 0 | specific (retry) | NO | shape check asserted **Recommendation** / FINAL TRANSACTION PROPOSAL on PM markdown — wrong contract (those live in other state fields) | corrected shape check to match render_pm_decision: **Rating** + **Executive Summary** + **Investment Thesis** |
+| 4 | 2026-05-16 00:39 | 0 | specific (retry 2) | **YES** | — | 834s, Buy, all 9 phases checkmark-green |
 
 ### Forensics on attempt 2
 

@@ -23,9 +23,9 @@ def _green_pass(intent: str = "specific", pass_no: int = 0) -> PassResult:
         exit_code=0, ratings=["Buy"],
         shapes=[ShapeReport(
             ticker="X",
-            final_proposal_present=True,
-            recommendation_header_present=True,
             rating_header_present=True,
+            executive_summary_present=True,
+            investment_thesis_present=True,
             pydantic_validated=True,
         )],
         elapsed_sec=0.1,

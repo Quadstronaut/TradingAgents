@@ -16,10 +16,13 @@ from tradingagents.agent_assist.summarize import RunResult
 @pytest.mark.unit
 class TestCheckShape:
     def _md(self) -> str:
+        """Sample PM markdown matching the render_pm_decision contract."""
         return (
-            "**Recommendation**: Buy\n"
-            "**Rating**: Buy\n"
-            "FINAL TRANSACTION PROPOSAL: **BUY**\n"
+            "**Rating**: Buy\n\n"
+            "**Executive Summary**: Initiate Buy with 20% allocation.\n\n"
+            "**Investment Thesis**: Strong fundamentals and rising margins.\n\n"
+            "**Price Target**: 150.0\n\n"
+            "**Time Horizon**: 6-12 months\n"
         )
 
     def test_complete_markdown_is_all_ok(self):
@@ -30,17 +33,31 @@ class TestCheckShape:
         report = runner._check_shape(r)
         assert report.all_ok is True
 
-    def test_missing_final_proposal_flagged(self):
-        md = self._md().replace("FINAL TRANSACTION PROPOSAL: **BUY**", "")
+    def test_missing_executive_summary_flagged(self):
+        md = self._md().replace("**Executive Summary**:", "(no summary)")
         r = RunResult("NVDA", "Buy", None, None, decision_md=md)
         report = runner._check_shape(r)
-        assert report.final_proposal_present is False
+        assert report.executive_summary_present is False
+        assert report.all_ok is False
+
+    def test_missing_investment_thesis_flagged(self):
+        md = self._md().replace("**Investment Thesis**:", "(no thesis)")
+        r = RunResult("NVDA", "Buy", None, None, decision_md=md)
+        report = runner._check_shape(r)
+        assert report.investment_thesis_present is False
+        assert report.all_ok is False
+
+    def test_missing_rating_header_flagged(self):
+        md = self._md().replace("**Rating**:", "(no rating)")
+        r = RunResult("NVDA", "Buy", None, None, decision_md=md)
+        report = runner._check_shape(r)
+        assert report.rating_header_present is False
         assert report.all_ok is False
 
     def test_empty_markdown_fails_all(self):
         r = RunResult("NVDA", "Buy", None, None, decision_md="")
         report = runner._check_shape(r)
-        assert report.final_proposal_present is False
+        assert report.rating_header_present is False
         assert "empty decision_md" in report.notes
 
     def test_failed_rating_flags_pydantic(self):
@@ -96,9 +113,9 @@ class TestPassResult:
     def _ok_shape(self, ticker: str = "NVDA"):
         return runner.ShapeReport(
             ticker=ticker,
-            final_proposal_present=True,
-            recommendation_header_present=True,
             rating_header_present=True,
+            executive_summary_present=True,
+            investment_thesis_present=True,
             pydantic_validated=True,
         )
 

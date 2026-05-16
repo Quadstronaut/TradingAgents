@@ -47,21 +47,32 @@ CANONICAL_RATINGS: frozenset[str] = frozenset({
 
 @dataclass
 class ShapeReport:
-    """Per-deep-run structured-output shape inspection."""
+    """Per-deep-run structured-output shape inspection.
+
+    ``decision_md`` is the Portfolio Manager's rendered markdown only
+    (from ``final_state['final_trade_decision']``). The PM's render
+    contract — see ``render_pm_decision`` in
+    ``tradingagents/agents/schemas.py`` — produces **Rating**,
+    **Executive Summary**, and **Investment Thesis** (plus optional
+    Price Target / Time Horizon). It does NOT produce **Recommendation**
+    (that's the Research Manager) or FINAL TRANSACTION PROPOSAL (that's
+    the Trader). Those live in other ``final_state`` fields that
+    ``RunResult.decision_md`` does not carry today.
+    """
 
     ticker: str
-    final_proposal_present: bool
-    recommendation_header_present: bool
     rating_header_present: bool
+    executive_summary_present: bool
+    investment_thesis_present: bool
     pydantic_validated: bool
     notes: list[str] = field(default_factory=list)
 
     @property
     def all_ok(self) -> bool:
         return all([
-            self.final_proposal_present,
-            self.recommendation_header_present,
             self.rating_header_present,
+            self.executive_summary_present,
+            self.investment_thesis_present,
             self.pydantic_validated,
         ])
 
@@ -153,9 +164,9 @@ def _check_shape(result: RunResult) -> ShapeReport:
     pydantic_validated = result.rating in CANONICAL_RATINGS
     return ShapeReport(
         ticker=result.ticker,
-        final_proposal_present="FINAL TRANSACTION PROPOSAL:" in md,
-        recommendation_header_present="**Recommendation**:" in md,
         rating_header_present="**Rating**:" in md,
+        executive_summary_present="**Executive Summary**:" in md,
+        investment_thesis_present="**Investment Thesis**:" in md,
         pydantic_validated=pydantic_validated,
         notes=notes,
     )

@@ -1,0 +1,3 @@
+# Tickers excluded from the verification rotor.
+# Populated by Stage 1 exclusion scan and by Stage 3 when a fixture
+# proves unfetchable. One ticker per line; '#' starts a comment.

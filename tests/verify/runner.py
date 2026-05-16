@@ -225,6 +225,13 @@ def _wrap(
     for r in deep_results:
         if r.log_path:
             summary_paths.append(str(r.log_path))
+    # If any deep-run produced FAILED, surface its error string into the
+    # PassResult.error field so status reports show the cause instead of
+    # 'red w/o error'.
+    if err is None:
+        deep_errors = [r.error for r in deep_results if r.rating == "FAILED" and r.error]
+        if deep_errors:
+            err = "; ".join(deep_errors)
     if not expect_deep_runs:
         # news_scan path — no deep-run capture; success is exit_code 0.
         shapes = []

@@ -175,7 +175,7 @@ def _run_task_with_capture(
     *,
     output_dir: Path,
     scripted_inputs: Optional[list[str]] = None,
-    capture_stdout: bool = True,
+    capture_stdout: bool = False,
 ) -> tuple[int, list[RunResult], Optional[str], Optional[str]]:
     """Run a Task with deep-run capture and input bypass.
 

@@ -55,7 +55,11 @@ try {
     exit 2
 }
 
-$cmdArgs = @("run", "python", "-m", "tests.verify.matrix")
+# -u forces unbuffered stdout/stderr so progress is visible when output
+# is being piped to Tee-Object or a file. Without this, a long-running
+# deep run can sit in the OS pipe buffer for minutes before flushing.
+$env:PYTHONUNBUFFERED = "1"
+$cmdArgs = @("run", "python", "-u", "-m", "tests.verify.matrix")
 if ($UntilGreen -gt 0) {
     $cmdArgs += @("--until-green", $UntilGreen, "--max-attempts", $MaxAttempts)
 } else {

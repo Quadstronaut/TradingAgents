@@ -18,6 +18,20 @@ what failed, what was fixed, and how long it took.
 |---|---|---|---|---|---|---|
 | 1 | 2026-05-15 23:28 | 0 | news_scan | yes | — | — |
 | 2 | 2026-05-15 23:33 | 0 | specific | NO | UnicodeEncodeError on cp1252 stdout during rich.Live teardown — destroyed a 25.5-min successful run | (a) force-UTF-8 stdout in matrix.py on win32, (b) capture RunResult inside ``with progress_display`` so a teardown exception preserves the rating. Regression test in tests/verify/test_orchestrator_teardown_resilience.py |
+| 3 | 2026-05-16 00:?? | 0 | specific (retry) | (running) | TBD | — |
+
+### Forensics on attempt 2
+
+`~/.tradingagents/logs/A/TradingAgentsStrategy_logs/full_states_log_2026-05-15.json` was fully written (60KB) before the crash:
+- Rating: **Buy**
+- Decision quality: high — names Cirena licensing deal, Zacks upgrade,
+  forward P/E 16.97 below historical avg, $1.79B cash, $855M FCF, debt
+  concerns, bull thesis stronger than bear.
+
+That proves `ta.propagate(...)` returned successfully; the loss was
+purely in the rich.Live teardown after the with-block yielded. The fix
+captures the RunResult inside the with-block so the next attempt
+returns the same Buy verdict (modulo LLM nondeterminism).
 
 ## When a pass goes red
 

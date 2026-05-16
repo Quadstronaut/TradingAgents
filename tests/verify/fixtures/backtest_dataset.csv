@@ -1,0 +1,6 @@
+ticker,analysis_date,realized_5d_alpha,expected_direction
+NVDA,2024-02-21,0.1328,positive
+TSLA,2024-04-24,0.1202,positive
+LLY,2023-08-08,0.0633,positive
+CVX,2022-02-24,0.1412,positive
+NVDA,2024-08-28,-0.1309,negative

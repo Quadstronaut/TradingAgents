@@ -1,0 +1,135 @@
+"""Self-tests for runner.py.
+
+These cover the lightweight pieces (shape check, task builder, input
+bypass). The deep-run path is exercised by the matrix itself; mocking
+it inside a unit test would just re-test the mock.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from tests.verify import runner
+from tradingagents.agent_assist.summarize import RunResult
+
+
+@pytest.mark.unit
+class TestCheckShape:
+    def _md(self) -> str:
+        return (
+            "**Recommendation**: Buy\n"
+            "**Rating**: Buy\n"
+            "FINAL TRANSACTION PROPOSAL: **BUY**\n"
+        )
+
+    def test_complete_markdown_is_all_ok(self):
+        r = RunResult(
+            ticker="NVDA", rating="Buy", log_path=None, error=None,
+            decision_md=self._md(),
+        )
+        report = runner._check_shape(r)
+        assert report.all_ok is True
+
+    def test_missing_final_proposal_flagged(self):
+        md = self._md().replace("FINAL TRANSACTION PROPOSAL: **BUY**", "")
+        r = RunResult("NVDA", "Buy", None, None, decision_md=md)
+        report = runner._check_shape(r)
+        assert report.final_proposal_present is False
+        assert report.all_ok is False
+
+    def test_empty_markdown_fails_all(self):
+        r = RunResult("NVDA", "Buy", None, None, decision_md="")
+        report = runner._check_shape(r)
+        assert report.final_proposal_present is False
+        assert "empty decision_md" in report.notes
+
+    def test_failed_rating_flags_pydantic(self):
+        r = RunResult("NVDA", "FAILED", None, "boom", decision_md=self._md())
+        report = runner._check_shape(r)
+        assert report.pydantic_validated is False
+
+
+@pytest.mark.unit
+class TestBuildTask:
+    def test_specific(self):
+        t = runner._build_task("specific", {"ticker": "NVDA"})
+        assert t.intent == "specific" and t.ticker == "NVDA"
+
+    def test_owned_uses_defaults(self):
+        t = runner._build_task("owned", {"ticker": "AAPL"})
+        assert t.shares == 10.0 and t.cost_basis == 100.0
+
+    def test_compare_requires_both_tickers(self):
+        t = runner._build_task("compare", {"ticker": "A", "ticker_b": "B"})
+        assert t.ticker == "A" and t.ticker_b == "B"
+
+    def test_unknown_intent_raises(self):
+        with pytest.raises(ValueError):
+            runner._build_task("nope", {})
+
+
+@pytest.mark.unit
+class TestInputBypass:
+    def test_default_answer_is_y(self):
+        with runner._bypass_inputs() as used:
+            assert input("anything? ") == "y"
+        assert used == ["y"]
+
+    def test_scripted_consumed_in_order(self):
+        with runner._bypass_inputs(["100", "5.0", "200.0"]) as used:
+            a = input("budget? ")
+            b = input("shares? ")
+            c = input("basis? ")
+        assert (a, b, c) == ("100", "5.0", "200.0")
+        assert used == ["100", "5.0", "200.0"]
+
+    def test_overflow_falls_back_to_last(self):
+        with runner._bypass_inputs(["y"]) as used:
+            a = input()
+            b = input()
+        assert a == "y" and b == "y"
+        assert used == ["y", "y"]
+
+
+@pytest.mark.unit
+class TestPassResult:
+    def _ok_shape(self, ticker: str = "NVDA"):
+        return runner.ShapeReport(
+            ticker=ticker,
+            final_proposal_present=True,
+            recommendation_header_present=True,
+            rating_header_present=True,
+            pydantic_validated=True,
+        )
+
+    def test_robust_ok_requires_canonical(self):
+        r = runner.PassResult(
+            pass_no=0, intent="specific", inputs={"ticker": "NVDA"},
+            exit_code=0, ratings=["Buy"], shapes=[self._ok_shape()],
+            elapsed_sec=1.0,
+        )
+        assert r.robust_ok is True and r.shape_ok is True
+
+    def test_non_canonical_rating_fails_robust(self):
+        r = runner.PassResult(
+            pass_no=0, intent="specific", inputs={},
+            exit_code=0, ratings=["Banana"], shapes=[],
+            elapsed_sec=1.0,
+        )
+        assert r.robust_ok is False
+
+    def test_news_scan_with_no_ratings_is_robust(self):
+        r = runner.PassResult(
+            pass_no=0, intent="news_scan", inputs={},
+            exit_code=0, ratings=[], shapes=[],
+            elapsed_sec=1.0,
+        )
+        assert r.robust_ok is True and r.shape_ok is True
+
+    def test_error_fails_robust(self):
+        r = runner.PassResult(
+            pass_no=0, intent="specific", inputs={},
+            exit_code=99, ratings=[], shapes=[],
+            elapsed_sec=1.0, error="boom",
+        )
+        assert r.robust_ok is False

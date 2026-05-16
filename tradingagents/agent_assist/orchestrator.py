@@ -154,6 +154,11 @@ def _run_one_deep(
         phases=full_pipeline_phases(),
         estimated_total_sec=DEEP_RUN_SECONDS,
     )
+    # Capture the result inside the progress-display context so that any
+    # exception during display teardown (e.g., cp1252 UnicodeEncodeError
+    # on Windows when stdout isn't a TTY) doesn't discard an otherwise-
+    # successful 25-minute deep run.
+    completed: Optional[RunResult] = None
     try:
         with progress_display(state) as ps:
             ta = TradingAgentsGraph(
@@ -171,16 +176,26 @@ def _run_one_deep(
                 additional_portfolio_context=position_str,
             )
             ps.finish()
-        decision_md = final_state.get("final_trade_decision", "")
-        log_dir = Path(config["results_dir"]) / ticker
+            completed = RunResult(
+                ticker=ticker, rating=rating,
+                log_path=Path(config["results_dir"]) / ticker, error=None,
+                decision_md=final_state.get("final_trade_decision", ""),
+            )
         print(f"[done] {ticker} -> {rating}")
-        return RunResult(
-            ticker=ticker, rating=rating, log_path=log_dir, error=None,
-            decision_md=decision_md,
-        )
+        return completed
     except KeyboardInterrupt:
         raise
     except Exception as exc:
+        # If the deep run completed and the exception is from the display
+        # teardown, surface the successful result rather than reporting
+        # FAILED. The run was 25 min of work; a cosmetic display bug
+        # should not destroy it.
+        if completed is not None:
+            logger.warning(
+                "progress-display teardown raised after a successful run "
+                "(non-fatal): %s: %s", type(exc).__name__, exc,
+            )
+            return completed
         logger.exception("propagate failed for %s", ticker)
         return RunResult(ticker=ticker, rating="FAILED", log_path=None, error=str(exc))
 

@@ -17,7 +17,7 @@ what failed, what was fixed, and how long it took.
 | # | Date | Pass # | Intents run | Green? | Failure mode | Fix applied |
 |---|---|---|---|---|---|---|
 | 1 | 2026-05-15 23:28 | 0 | news_scan | yes | — | — |
-| 2 | 2026-05-15 23:?? | 0 | specific | (running) | TBD | — |
+| 2 | 2026-05-15 23:33 | 0 | specific | NO | UnicodeEncodeError on cp1252 stdout during rich.Live teardown — destroyed a 25.5-min successful run | (a) force-UTF-8 stdout in matrix.py on win32, (b) capture RunResult inside ``with progress_display`` so a teardown exception preserves the rating. Regression test in tests/verify/test_orchestrator_teardown_resilience.py |
 
 ## When a pass goes red
 

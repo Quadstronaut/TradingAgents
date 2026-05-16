@@ -25,6 +25,19 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Optional
 
+# Force UTF-8 stdout on Windows. The default code page (cp1252) cannot
+# encode the arrow / em-dash glyphs rich.Live emits, and that error fires
+# during the progress-display teardown — destroying an otherwise-successful
+# 25-minute deep run. See specific-intent failure on 2026-05-15.
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except AttributeError:
+        # Detached streams (e.g., pytest capture) don't expose reconfigure;
+        # they're already non-cp1252 so this is fine to skip.
+        pass
+
 from tests.verify.runner import (
     INTENT_VERIFIERS,
     PassResult,

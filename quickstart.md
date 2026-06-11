@@ -14,7 +14,7 @@ For the full reasoning behind each step and troubleshooting, see [`steps-to-prod
 Change ticker/date inside `main.py` (lines near the bottom), then:
 
 ```powershell
-cd P:\Documents\GIT\TradingAgents
+cd G:\Documents\GIT\RESEARCH-tools\TradingAgents
 uv run python main.py
 ```
 

@@ -1879,7 +1879,7 @@ exit $LASTEXITCODE
 In a new PowerShell window:
 
 ```powershell
-cd P:\Documents\GIT\TradingAgents
+cd G:\Documents\GIT\RESEARCH-tools\TradingAgents
 ./agent.ps1 -Prompt "should I buy NVDA"
 ```
 

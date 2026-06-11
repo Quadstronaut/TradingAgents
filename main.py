@@ -5,8 +5,9 @@ from dotenv import find_dotenv, load_dotenv
 
 load_dotenv(find_dotenv(usecwd=True))
 
-# LOCAL CONFIG (Ollama, this machine). Upstream main.py uses OpenAI; on pull
-# conflicts: `git stash push main.py` → `git pull` → `git stash pop`, resolve.
+# LOCAL CONFIG (Ollama, this machine). DEFAULT_CONFIG also applies
+# TRADINGAGENTS_* env-var overrides (upstream v0.2.5), so prefer .env for
+# new tweaks; the hard-coded values below intentionally pin this box's setup.
 config = DEFAULT_CONFIG.copy()
 config["llm_provider"]            = "ollama"
 config["backend_url"]             = "http://localhost:11434/v1"

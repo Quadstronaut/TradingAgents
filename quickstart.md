@@ -36,8 +36,8 @@ On the **next same-ticker run**, the pending entry from before gets auto-resolve
 Use the interactive CLI instead — it writes `reports/<date>/*.md` per agent on top of everything above:
 
 ```powershell
-uv run tradingagents analyze            # interactive prompts
-uv run tradingagents analyze --checkpoint   # crash-resumable per-node state
+uv run tradingagents            # interactive prompts
+uv run tradingagents --checkpoint   # crash-resumable per-node state
 ```
 
 CLI's Ollama model menu won't list `qwen3-coder:30b` / `qwen3:8b` (they're not in the upstream catalog) — pick any Ollama option to get past the prompt; model IDs are still controlled by `main.py` config when launched programmatically, or by the CLI's own picker for the interactive case. For best quality on the CLI path, just edit `cli/utils.py:MODEL_OPTIONS` to add your models, or run `python main.py` directly.
@@ -46,7 +46,7 @@ CLI's Ollama model menu won't list `qwen3-coder:30b` / `qwen3:8b` (they're not i
 
 ```powershell
 # Wipe checkpoint DBs (per-ticker SQLite) before a run
-uv run tradingagents analyze --clear-checkpoints
+uv run tradingagents --clear-checkpoints
 
 # Wipe the memory log
 Remove-Item ~\.tradingagents\memory\trading_memory.md

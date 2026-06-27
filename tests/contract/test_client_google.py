@@ -57,8 +57,12 @@ def test_get_llm_instantiates_normalized_chat_google():
 
 
 @pytest.mark.verify_contract
-def test_thinking_level_maps_to_thinking_budget_for_gemini_25():
-    """Gemini 2.5 maps thinking_level=high -> thinking_budget=-1 (dynamic)."""
+def test_thinking_level_no_longer_maps_to_thinking_budget():
+    """The integer ``thinking_budget`` (the Gemini-2.5 knob) was retired upstream
+    in v0.3.0: every model now takes the raw string ``thinking_level``. A
+    2.5-era model id must therefore pass ``thinking_level`` through unchanged and
+    must NOT synthesize a ``thinking_budget`` kwarg.
+    """
     with patch(
         "tradingagents.llm_clients.google_client.NormalizedChatGoogleGenerativeAI",
         return_value=MagicMock(),
@@ -71,8 +75,8 @@ def test_thinking_level_maps_to_thinking_budget_for_gemini_25():
         client.get_llm()
 
     kwargs = mock_cls.call_args.kwargs
-    assert kwargs.get("thinking_budget") == -1
-    assert "thinking_level" not in kwargs  # only Gemini 3 uses raw thinking_level
+    assert kwargs.get("thinking_level") == "high"
+    assert "thinking_budget" not in kwargs
 
 
 @pytest.mark.verify_contract

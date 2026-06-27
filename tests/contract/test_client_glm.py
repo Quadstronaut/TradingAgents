@@ -29,13 +29,10 @@ def test_create_llm_client_returns_openai_client_for_glm():
 
 
 @pytest.mark.verify_contract
-def test_get_llm_uses_zhipu_endpoint_and_key(monkeypatch):
+def test_get_llm_uses_zhipu_endpoint_and_key(monkeypatch, swap_chat_class):
     monkeypatch.setenv("ZHIPU_API_KEY", "zhipu-test-key")
 
-    with patch(
-        "tradingagents.llm_clients.openai_client.NormalizedChatOpenAI",
-        return_value=MagicMock(),
-    ) as mock_cls:
+    with swap_chat_class("glm") as mock_cls:
         client = create_llm_client(provider="glm", model="glm-5")
         client.get_llm()
 

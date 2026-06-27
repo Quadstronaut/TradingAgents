@@ -44,17 +44,13 @@ def test_create_llm_client_returns_openai_client():
 
 
 @pytest.mark.verify_contract
-def test_get_llm_instantiates_normalized_chat_openai():
-    """get_llm() constructs NormalizedChatOpenAI with use_responses_api=True for native OpenAI."""
-    sentinel = MagicMock(name="ChatOpenAIInstance")
-    with patch(
-        "tradingagents.llm_clients.openai_client.NormalizedChatOpenAI",
-        return_value=sentinel,
-    ) as mock_cls:
+def test_get_llm_instantiates_normalized_chat_openai(swap_chat_class):
+    """get_llm() constructs the provider's chat_class with use_responses_api=True for native OpenAI."""
+    with swap_chat_class("openai") as mock_cls:
         client = create_llm_client(provider="openai", model="gpt-5.4")
         result = client.get_llm()
 
-    assert result is sentinel
+    assert result is mock_cls.return_value
     mock_cls.assert_called_once()
     call_kwargs = mock_cls.call_args.kwargs
     assert call_kwargs["model"] == "gpt-5.4"
@@ -63,15 +59,12 @@ def test_get_llm_instantiates_normalized_chat_openai():
 
 
 @pytest.mark.verify_contract
-def test_get_llm_does_not_set_base_url_for_native_openai():
+def test_get_llm_does_not_set_base_url_for_native_openai(swap_chat_class):
     """Native OpenAI must not pre-fill base_url unless the user provides one."""
-    with patch(
-        "tradingagents.llm_clients.openai_client.NormalizedChatOpenAI",
-        return_value=MagicMock(),
-    ) as mock_cls:
+    with swap_chat_class("openai") as mock_cls:
         client = create_llm_client(provider="openai", model="gpt-5.4")
         client.get_llm()
-    # Native OpenAI does not appear in _PROVIDER_CONFIG so no base_url is set.
+    # The native-OpenAI ProviderSpec has base_url=None, so none is forwarded.
     assert "base_url" not in mock_cls.call_args.kwargs
 
 

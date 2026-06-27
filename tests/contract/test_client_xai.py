@@ -32,13 +32,10 @@ def test_create_llm_client_returns_openai_client_for_xai():
 
 
 @pytest.mark.verify_contract
-def test_get_llm_uses_xai_endpoint_and_api_key(monkeypatch):
+def test_get_llm_uses_xai_endpoint_and_api_key(monkeypatch, swap_chat_class):
     monkeypatch.setenv("XAI_API_KEY", "xai-test-key")
 
-    with patch(
-        "tradingagents.llm_clients.openai_client.NormalizedChatOpenAI",
-        return_value=MagicMock(),
-    ) as mock_cls:
+    with swap_chat_class("xai") as mock_cls:
         client = create_llm_client(provider="xai", model="grok-4-0709")
         client.get_llm()
 
@@ -52,12 +49,9 @@ def test_get_llm_uses_xai_endpoint_and_api_key(monkeypatch):
 
 
 @pytest.mark.verify_contract
-def test_explicit_base_url_overrides_default():
+def test_explicit_base_url_overrides_default(swap_chat_class):
     """Corporate proxy / gateway: user-supplied base_url wins over default."""
-    with patch(
-        "tradingagents.llm_clients.openai_client.NormalizedChatOpenAI",
-        return_value=MagicMock(),
-    ) as mock_cls:
+    with swap_chat_class("xai") as mock_cls:
         client = create_llm_client(
             provider="xai",
             model="grok-4-0709",

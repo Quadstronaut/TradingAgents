@@ -34,16 +34,19 @@ def test_create_llm_client_returns_openai_client_for_deepseek():
 
 
 @pytest.mark.verify_contract
-def test_get_llm_uses_deepseek_subclass_endpoint_and_key(monkeypatch):
-    """DeepSeek must instantiate the DeepSeekChatOpenAI subclass (not the
-    base NormalizedChatOpenAI) and hit api.deepseek.com.
+def test_get_llm_uses_deepseek_subclass_endpoint_and_key(monkeypatch, swap_chat_class):
+    """DeepSeek must be wired to the DeepSeekChatOpenAI subclass (not the base
+    NormalizedChatOpenAI) and hit api.deepseek.com with the resolved key.
     """
+    from tradingagents.llm_clients import openai_client as oc
+
+    # The provider registry is the single source of truth for the subclass: the
+    # DeepSeek row must point at DeepSeekChatOpenAI (thinking-mode quirks).
+    assert oc.OPENAI_COMPATIBLE_PROVIDERS["deepseek"].chat_class is oc.DeepSeekChatOpenAI
+
     monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-test-key")
 
-    with patch(
-        "tradingagents.llm_clients.openai_client.DeepSeekChatOpenAI",
-        return_value=MagicMock(),
-    ) as mock_cls:
+    with swap_chat_class("deepseek") as mock_cls:
         client = create_llm_client(provider="deepseek", model="deepseek-chat")
         client.get_llm()
 

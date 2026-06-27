@@ -30,13 +30,10 @@ def test_create_llm_client_returns_openai_client_for_qwen():
 
 
 @pytest.mark.verify_contract
-def test_get_llm_uses_dashscope_endpoint_and_key(monkeypatch):
+def test_get_llm_uses_dashscope_endpoint_and_key(monkeypatch, swap_chat_class):
     monkeypatch.setenv("DASHSCOPE_API_KEY", "qwen-test-key")
 
-    with patch(
-        "tradingagents.llm_clients.openai_client.NormalizedChatOpenAI",
-        return_value=MagicMock(),
-    ) as mock_cls:
+    with swap_chat_class("qwen") as mock_cls:
         client = create_llm_client(provider="qwen", model="qwen-plus")
         client.get_llm()
 

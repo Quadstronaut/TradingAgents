@@ -263,8 +263,13 @@ def test_rate_limit_response_raises_alpha_vantage_rate_limit_error(monkeypatch):
 
 @pytest.mark.verify_contract
 def test_route_to_vendor_falls_back_on_rate_limit(monkeypatch):
-    """When alpha_vantage hits its rate limit, route_to_vendor must fall
-    back to the next available vendor (yfinance).
+    """When the primary in a *configured* multi-vendor chain rate-limits,
+    route_to_vendor must fall back to the next vendor in that chain.
+
+    Fallback is now scoped to the vendors the user explicitly chained
+    (``data_vendors="alpha_vantage,yfinance"``); routing no longer silently
+    reaches for a vendor that wasn't configured (#988/#289). So both vendors
+    are listed here, in order, to exercise the fallback.
     """
     from tradingagents.dataflows import interface as iface
 
@@ -291,7 +296,7 @@ def test_route_to_vendor_falls_back_on_rate_limit(monkeypatch):
         iface,
         "get_config",
         lambda: {
-            "data_vendors": {"core_stock_apis": "alpha_vantage"},
+            "data_vendors": {"core_stock_apis": "alpha_vantage,yfinance"},
             "tool_vendors": {},
         },
     )

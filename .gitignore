@@ -221,3 +221,9 @@ __marimo__/
 # Enterprise env file (secrets) and generated run reports
 .env.enterprise
 reports/
+
+# Verification harness run artifacts (timestamped, regenerated per run)
+tests/verify/.runs/
+
+# council run telemetry (local only)
+.claude/council-ledger.jsonl

@@ -39,7 +39,7 @@ Non-goals: changing the locked Ollama configuration; rewriting the LangGraph top
 ## Branch / workspace strategy
 
 - Create a git worktree at `..\TradingAgents-verify\` on a new branch `verify/full-battery` cut from `feat/agent-assist`.
-- Untracked admin files in the current working tree (`CLAUDE.md`, `kyle*.md`, `steps-to-production.md`, `scripts/expand_universe.py`) stay behind — the worktree starts with a clean working tree from the branch.
+- Untracked admin files in the current working tree (`CLAUDE.md`, personal notes files, `steps-to-production.md`, `scripts/expand_universe.py`) stay behind — the worktree starts with a clean working tree from the branch.
 - Ollama (host-side) and `~/.tradingagents/` (host-side) are shared with the worktree automatically.
 - Merge strategy: after three clean passes, open a PR from `verify/full-battery` into `feat/agent-assist`. Squash-or-rebase per repo convention; the worktree is removed by `git worktree remove` once the PR lands.
 
